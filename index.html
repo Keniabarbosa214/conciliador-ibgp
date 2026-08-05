@@ -552,7 +552,7 @@
     <div class="privacy-note">
       🔒 Tudo roda no seu navegador — os arquivos não são enviados a nenhum servidor.
       <span class="save-indicator" id="saveIndicator"></span>
-      <button class="reset-link" id="btnReset">Começar de novo com outros arquivos</button>
+      <button class="reset-link" id="btnReset">Trocar algum dos arquivos</button>
     </div>
   </section>
 
@@ -3520,13 +3520,22 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
 });
 
 /* ============================= RESET / TROCAR ARQUIVOS ============================= */
+// Ao voltar pra tela de upload, os arquivos que já estavam carregados continuam na memória —
+// assim dá pra atualizar só UM dos três (ex: só o extrato novo) sem precisar escolher os
+// outros dois de novo. Escolher um arquivo novo numa caixa só troca aquela, as outras ficam.
+function atualizarDropzonesComArquivosAtuais(){
+  if(ofxRaw){ nameOfxEl.textContent = '✓ ' + ofxFilename + ' (já carregado)'; dzOfx.classList.add('ready'); }
+  else { nameOfxEl.textContent=''; dzOfx.classList.remove('ready'); }
+  if(xlsxRaw){ nameXlsxEl.textContent = '✓ ' + xlsxFilename + ' (já carregado)'; dzXlsx.classList.add('ready'); }
+  else { nameXlsxEl.textContent=''; dzXlsx.classList.remove('ready'); }
+  if(nfseRaw){ nameNfseEl.textContent = '✓ ' + nfseFilename + ' (já carregado)'; dzNfse.classList.add('ready'); }
+  else { nameNfseEl.textContent=''; dzNfse.classList.remove('ready'); }
+}
 function voltarParaUpload(){
-  ofxRaw = null; xlsxRaw = null; report = []; debits = []; credits = [];
   currentSessionKey = null;
-  nameOfxEl.textContent=''; nameXlsxEl.textContent='';
-  dzOfx.classList.remove('ready'); dzXlsx.classList.remove('ready');
   fileOfxInput.value=''; fileXlsxInput.value='';
-  btnRun.disabled = true;
+  atualizarDropzonesComArquivosAtuais();
+  checkReady();
   document.getElementById('resultsStage').classList.remove('show');
   document.getElementById('uploadStage').classList.add('show');
   document.getElementById('btnTrocarArquivos').style.display = 'none';
