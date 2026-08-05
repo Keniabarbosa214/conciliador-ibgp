@@ -368,6 +368,17 @@
   .edit-inline:focus{ outline:none; border-color:var(--navy); background:#fff; }
   .edit-inline.nf{ font-family:'IBM Plex Mono',monospace; max-width:120px; }
 
+  .cc-ac-wrap{ position:relative; }
+  .cc-ac-list{
+    display:none; position:absolute; top:100%; left:0; right:0; z-index:50;
+    background:#fff; border:1px solid var(--navy); border-top:none; border-radius:0 0 4px 4px;
+    max-height:220px; overflow-y:auto; box-shadow:0 4px 10px rgba(0,0,0,.15);
+  }
+  .cc-ac-item{ padding:7px 9px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--paper-2); }
+  .cc-ac-item:last-child{ border-bottom:none; }
+  .cc-ac-item:hover, .cc-ac-item.active{ background:var(--paper-2); }
+  .cc-ac-empty{ padding:7px 9px; font-size:11.5px; color:var(--ink-soft); font-style:italic; }
+
   .empty-state{
     padding:40px 20px; text-align:center; color:var(--ink-soft); font-family:sans-serif; font-size:14px;
   }
@@ -748,10 +759,10 @@ const CENTRO_CUSTO_MASTER_LIST = [
   '23082 - ATI PART INFORMADA - NÃO PAGAR - RH - Saúde Ocupacional e Segurança',
   '1161 - Pessoas - Refeições  - Lanches',
   '14080 - Fornecedores- Cuidados Veterinários e Pet',
-  '#135 - 19010 - Tributos - Federais -  FGTS',
-  '#135 - 190020 - Tributos - Federais -IRRF',
-  '#135 - 19030 - Tributos - Federais - PIS sobre folha',
-  '#135 - 19200 - Tributos -Municipais - IPTU',
+  '19010 - Tributos - Federais -  FGTS',
+  '19020 - Tributos - Federais -IRRF',
+  '19030 - Tributos - Federais - PIS sobre folha',
+  '19200 - Tributos -Municipais - IPTU',
   '19200 - Tributos -Municipais - Taxas ( taxa de coleta de lixo, fiscalização e etc..)',
   '2190  - Deslocamentos -  Despesas com Viagens',
   '4192 - Obras - Fretes e Transportes',
@@ -1439,6 +1450,69 @@ function buildRestrictedSelect(options, selected, placeholder){
   return `<option value="">${placeholder}</option>${optsHtml}`;
 }
 
+// Campo de busca com sugestões (autocomplete) — vai digitando e as opções que combinam
+// aparecem numa lista pra clicar. Só aceita valores que já existem na lista (centro de custo
+// ou projeto); se sair do campo com um texto que não bate com nenhuma opção, ele volta pro
+// último valor válido — não fica "livre" pra digitar qualquer coisa.
+// optionsKey: 'centroCusto' ou 'projeto' (define de qual lista as sugestões vêm).
+// extraAttrs: string com os atributos data-* extras necessários pra identificar o que atualizar
+// quando uma opção for escolhida (ex: 'data-idx="3" data-field="centroCusto"').
+function buildAutocompleteInput(optionsKey, selected, placeholder, extraAttrs){
+  const safe = (selected||'').toString().replace(/"/g,'&quot;');
+  return `<div class="cc-ac-wrap">
+    <input type="text" class="edit-inline cc-ac-input" data-options="${optionsKey}" data-valor-atual="${safe}" ${extraAttrs||''} value="${safe}" placeholder="${placeholder}" autocomplete="off">
+    <div class="cc-ac-list"></div>
+  </div>`;
+}
+
+// ---- Comportamento global do autocomplete (funciona pra qualquer campo, em qualquer aba) ----
+document.addEventListener('input', (e) => {
+  if(!e.target.classList || !e.target.classList.contains('cc-ac-input')) return;
+  const input = e.target;
+  const listEl = input.nextElementSibling;
+  const term = normalize(input.value);
+  const options = input.dataset.options === 'projeto' ? projetoOptions : centroCustoOptions;
+  if(!term){ listEl.innerHTML=''; listEl.style.display='none'; return; }
+  const matches = options.filter(o => normalize(o).includes(term)).slice(0, 25);
+  if(matches.length === 0){
+    listEl.innerHTML = '<div class="cc-ac-empty">Nada encontrado com esse termo</div>';
+    listEl.style.display = 'block';
+    return;
+  }
+  listEl.innerHTML = matches.map(m => `<div class="cc-ac-item" data-value="${m.replace(/"/g,'&quot;')}">${m}</div>`).join('');
+  listEl.style.display = 'block';
+});
+document.addEventListener('click', (e) => {
+  if(e.target.classList && e.target.classList.contains('cc-ac-item')){
+    const value = e.target.dataset.value;
+    const wrap = e.target.closest('.cc-ac-wrap');
+    const input = wrap.querySelector('.cc-ac-input');
+    input.value = value;
+    input.dataset.valorAtual = value;
+    wrap.querySelector('.cc-ac-list').style.display = 'none';
+    input.dispatchEvent(new CustomEvent('ccselect', {bubbles:true}));
+  } else {
+    document.querySelectorAll('.cc-ac-list').forEach(l => {
+      if(!l.closest('.cc-ac-wrap') || !l.closest('.cc-ac-wrap').contains(e.target)) l.style.display = 'none';
+    });
+  }
+});
+document.addEventListener('focusout', (e) => {
+  if(!e.target.classList || !e.target.classList.contains('cc-ac-input')) return;
+  const input = e.target;
+  setTimeout(() => {
+    const options = input.dataset.options === 'projeto' ? projetoOptions : centroCustoOptions;
+    if(input.value && !options.includes(input.value)){
+      input.value = input.dataset.valorAtual || '';
+    } else if(input.value && input.value !== input.dataset.valorAtual){
+      input.dataset.valorAtual = input.value;
+      input.dispatchEvent(new CustomEvent('ccselect', {bubbles:true}));
+    }
+    const wrap = input.closest('.cc-ac-wrap');
+    if(wrap) wrap.querySelector('.cc-ac-list').style.display = 'none';
+  }, 180);
+});
+
 function normalize(s){
   return (s||'').toString().toUpperCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
@@ -1511,7 +1585,7 @@ const PADROES_SUGESTAO = [
   { re: /CEMIG|ENERGISA|LIGHT\b|ENEL\b|COPEL\b/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CONCESSIONÁRIA DE ENERGIA'), cc: '3120 - Infraestrutura - Energia Elétrica' },
   { re: /COPASA|SABESP|AGUA E ESGOTO/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CONCESSIONÁRIA DE ÁGUA'), cc: '3130 - Infraestrutura - Água e Esgoto' },
   { re: /CONDOMINIO/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CONDOMÍNIO'), cc: '3110 - Infraestrutura - Condomínio' },
-  { re: /\bIPTU\b/, fornecedor: (m) => { const c = detectarCidade(m); return c ? 'PREFEITURA DE ' + c.replace(/\b\w/g, l=>l.toUpperCase()) : 'PREFEITURA (confirme o município)'; }, cc: '#135 - 19200 - Tributos -Municipais - IPTU' },
+  { re: /\bIPTU\b/, fornecedor: (m) => { const c = detectarCidade(m); return c ? 'PREFEITURA DE ' + c.replace(/\b\w/g, l=>l.toUpperCase()) : 'PREFEITURA (confirme o município)'; }, cc: '19200 - Tributos -Municipais - IPTU' },
 ];
 
 // Aplica os padrões acima no memo (bruto e normalizado) e devolve a melhor sugestão encontrada,
@@ -2794,14 +2868,14 @@ function renderResults(){
         <td style="font-size:12px;color:var(--ink-soft);">${c.memo}${c.used ? ` <span class="badge-id">🔗 NF confirmada</span> <button class="link-btn" onclick="desvincularNota('${c.fitid}')">🔓 Desvincular</button>` : ''}</td>
         <td><input type="text" class="edit-inline" data-idx="${idx}" data-field="cliente" value="${(c.cliente||'').replace(/"/g,'&quot;')}" placeholder="Nome do cliente"></td>
         <td><input type="text" class="edit-inline nf" data-idx="${idx}" data-field="nf" value="${(c.nf||'').replace(/"/g,'&quot;')}" placeholder="opcional"></td>
-        <td><select class="edit-inline select-inline" data-idx="${idx}" data-field="centroCusto">${buildRestrictedSelect(centroCustoOptions, c.centroCusto, '— Centro de custo —')}</select></td>
-        <td><select class="edit-inline select-inline" data-idx="${idx}" data-field="projeto">${buildRestrictedSelect(projetoOptions, c.projeto, '— Projeto —')}</select></td>
+        <td>${buildAutocompleteInput('centroCusto', c.centroCusto, '— Centro de custo —', `data-idx="${idx}" data-field="centroCusto" data-modelo="credit"`)}</td>
+        <td>${buildAutocompleteInput('projeto', c.projeto, '— Projeto —', `data-idx="${idx}" data-field="projeto" data-modelo="credit"`)}</td>
       </tr>`;
     });
     html += '</tbody></table>';
     wrap.innerHTML = html;
-    wrap.querySelectorAll('.select-inline').forEach(sel => {
-      sel.addEventListener('change', (e) => {
+    wrap.querySelectorAll('.cc-ac-input[data-modelo="credit"]').forEach(sel => {
+      sel.addEventListener('ccselect', (e) => {
         const idx = +e.target.dataset.idx;
         const field = e.target.dataset.field;
         credits[idx][field] = e.target.value;
@@ -2873,8 +2947,8 @@ function renderResults(){
       html += `<tr>
         <td class="mono" style="font-size:11.5px;">${r.idReport}</td>
         <td style="font-size:12.5px;">${r.empresa}</td>
-        <td><select class="edit-inline select-inline report-cc-select" data-rowidx="${r.rowIndex}">${buildRestrictedSelect(centroCustoOptions, r.centroCusto, '— Centro de custo —')}</select></td>
-        <td><select class="edit-inline select-inline report-proj-select" data-rowidx="${r.rowIndex}">${buildRestrictedSelect(projetoOptions, r.projeto||'', '— Projeto —')}</select></td>
+        <td>${buildAutocompleteInput('centroCusto', r.centroCusto, '— Centro de custo —', `data-rowidx="${r.rowIndex}" data-campo="report-cc"`)}</td>
+        <td>${buildAutocompleteInput('projeto', r.projeto||'', '— Projeto —', `data-rowidx="${r.rowIndex}" data-campo="report-proj"`)}</td>
         <td><input type="text" class="edit-inline fornecedor-input" data-rowidx="${r.rowIndex}" value="${(r.favorecido||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor"></td>
         <td><input type="text" class="edit-inline valor-input" data-rowidx="${r.rowIndex}" value="${r.valor!==null ? fmtMoney(r.valor) : ''}" placeholder="R$ 0,00" style="text-align:right;max-width:110px;"></td>
         <td class="data">${r.pagoEm ? fmtDateISOtoBR(r.pagoEm) : '-'}</td>`;
@@ -2947,8 +3021,8 @@ function renderResults(){
           <td class="valor">${fmtMoney(Math.abs(d.amount))}</td>
           <td style="font-size:12px;color:var(--ink-soft);">${d.memo}${d.name ? ' · '+d.name : ''}</td>
           <td><input type="text" class="edit-inline debit-fornecedor-input" data-fitid="${d.fitid}" value="${(d.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome, Pix ou CPF identificado"></td>
-          <td><select class="edit-inline debit-centrocusto-select" data-fitid="${d.fitid}">${buildRestrictedSelect(centroCustoOptions, d.centroCusto, '— Centro de custo —')}</select></td>
-          <td><select class="edit-inline debit-projeto-select" data-fitid="${d.fitid}">${buildRestrictedSelect(projetoOptions, d.projeto, '— Projeto —')}</select></td>
+          <td>${buildAutocompleteInput('centroCusto', d.centroCusto, '— Centro de custo —', `data-fitid="${d.fitid}" data-campo="debit-cc"`)}</td>
+          <td>${buildAutocompleteInput('projeto', d.projeto, '— Projeto —', `data-fitid="${d.fitid}" data-campo="debit-proj"`)}</td>
           <td><button class="link-btn" onclick="marcarDebitoIdentificado('${d.fitid}')">✓ Identificado</button></td>
         </tr>`;
       });
@@ -2979,16 +3053,16 @@ function renderResults(){
       persistCurrentSession();
     });
   });
-  wrap.querySelectorAll('.report-cc-select').forEach(sel => {
-    sel.addEventListener('change', (e) => {
+  wrap.querySelectorAll('.cc-ac-input[data-campo="report-cc"]').forEach(sel => {
+    sel.addEventListener('ccselect', (e) => {
       const r = report.find(x => x.rowIndex === +e.target.dataset.rowidx);
       if(!r) return;
       r.centroCusto = e.target.value;
       persistCurrentSession();
     });
   });
-  wrap.querySelectorAll('.report-proj-select').forEach(sel => {
-    sel.addEventListener('change', (e) => {
+  wrap.querySelectorAll('.cc-ac-input[data-campo="report-proj"]').forEach(sel => {
+    sel.addEventListener('ccselect', (e) => {
       const r = report.find(x => x.rowIndex === +e.target.dataset.rowidx);
       if(!r) return;
       r.projeto = e.target.value;
@@ -3003,16 +3077,16 @@ function renderResults(){
     });
     inp.addEventListener('change', persistCurrentSession);
   });
-  wrap.querySelectorAll('.debit-centrocusto-select').forEach(sel => {
-    sel.addEventListener('change', (e) => {
+  wrap.querySelectorAll('.cc-ac-input[data-campo="debit-cc"]').forEach(sel => {
+    sel.addEventListener('ccselect', (e) => {
       const d = debits.find(x => x.fitid === e.target.dataset.fitid);
       if(!d) return;
       d.centroCusto = e.target.value;
       persistCurrentSession();
     });
   });
-  wrap.querySelectorAll('.debit-projeto-select').forEach(sel => {
-    sel.addEventListener('change', (e) => {
+  wrap.querySelectorAll('.cc-ac-input[data-campo="debit-proj"]').forEach(sel => {
+    sel.addEventListener('ccselect', (e) => {
       const d = debits.find(x => x.fitid === e.target.dataset.fitid);
       if(!d) return;
       d.projeto = e.target.value;
@@ -3315,18 +3389,18 @@ function renderCriarLancamento(fitid, tipo){
     el.innerHTML = `
       ${avisoSugestao}
       <input type="text" class="edit-inline" id="criarForn-${fitid}" placeholder="Nome do fornecedor" value="${sugestao ? sugestao.fornecedor.replace(/"/g,'&quot;') : ''}" style="margin-bottom:4px;">
-      <select class="edit-inline" id="criarCC-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(centroCustoOptions, sugestao ? sugestao.centroCusto : '', '— Centro de custo —')}</select>
-      <select class="edit-inline" id="criarProj-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(projetoOptions, '', '— Projeto —')}</select>
-      <button class="btn-cloud" style="padding:6px 12px;font-size:12px;" onclick="confirmarCriarLancamentoSaida('${fitid}')">✓ Identificar sem vincular ao relatório</button>
+      ${buildAutocompleteInput('centroCusto', sugestao ? sugestao.centroCusto : '', '— Centro de custo —', `id="criarCC-${fitid}"`)}
+      ${buildAutocompleteInput('projeto', '', '— Projeto —', `id="criarProj-${fitid}"`)}
+      <button class="btn-cloud" style="padding:6px 12px;font-size:12px;margin-top:4px;" onclick="confirmarCriarLancamentoSaida('${fitid}')">✓ Identificar sem vincular ao relatório</button>
     `;
   } else {
     el.innerHTML = `
       ${avisoSugestao}
       <input type="text" class="edit-inline" id="criarCliente-${fitid}" placeholder="Nome do cliente" value="${sugestao ? sugestao.fornecedor.replace(/"/g,'&quot;') : ''}" style="margin-bottom:4px;">
       <input type="text" class="edit-inline" id="criarNF-${fitid}" placeholder="Nº NF (opcional)" style="margin-bottom:4px;max-width:120px;">
-      <select class="edit-inline" id="criarCCReceb-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(centroCustoOptions, sugestao ? sugestao.centroCusto : (document.getElementById('cfgCentroCustoReceber').value||''), '— Centro de custo —')}</select>
-      <select class="edit-inline" id="criarProjReceb-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(projetoOptions, '', '— Projeto —')}</select>
-      <button class="btn-cloud" style="padding:6px 12px;font-size:12px;" onclick="confirmarCriarLancamentoEntrada('${fitid}')">✓ Identificar sem vincular a nota fiscal</button>
+      ${buildAutocompleteInput('centroCusto', sugestao ? sugestao.centroCusto : (document.getElementById('cfgCentroCustoReceber').value||''), '— Centro de custo —', `id="criarCCReceb-${fitid}"`)}
+      ${buildAutocompleteInput('projeto', '', '— Projeto —', `id="criarProjReceb-${fitid}"`)}
+      <button class="btn-cloud" style="padding:6px 12px;font-size:12px;margin-top:4px;" onclick="confirmarCriarLancamentoEntrada('${fitid}')">✓ Identificar sem vincular a nota fiscal</button>
     `;
   }
 }
