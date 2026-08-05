@@ -456,8 +456,12 @@
 
     <div class="busca-global-bar">
       <span class="busca-global-label">🔍 Buscar em todas as conciliações salvas (qualquer período)</span>
-      <div style="display:flex;gap:8px;margin-top:6px;">
-        <input type="text" id="buscaGlobalInput" placeholder="Nome, valor, ID, NF, CNPJ/CPF..." style="flex:1;">
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="buscaGlobalInput" placeholder="Nome, valor, ID, NF, CNPJ/CPF..." style="flex:1;min-width:200px;">
+        <label style="font-size:12px;color:var(--ink-soft);">Período (opcional)</label>
+        <input type="date" id="buscaGlobalDe" style="width:135px;">
+        <span style="font-size:12px;color:var(--ink-soft);">até</span>
+        <input type="date" id="buscaGlobalAte" style="width:135px;">
         <button id="btnBuscaGlobal" class="btn-aplicar-periodo">Buscar</button>
       </div>
       <div id="buscaGlobalResultado"></div>
@@ -1181,16 +1185,28 @@ async function persistCurrentSession(){
   if(el) el.textContent = '💾 Salvo às ' + lastSavedAt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 }
 
-// Busca um termo em TODAS as conciliações salvas (qualquer período), sem precisar trocar de
-// tela nem reanexar arquivo nenhum — útil pra conferir se um pagamento/recebimento de um mês
+// Busca um termo (e/ou período) em TODAS as conciliações salvas, sem precisar trocar de tela
+// nem reanexar arquivo nenhum — útil pra conferir se um pagamento/recebimento de um mês
 // anterior (ou seguinte) já foi tratado, enquanto se trabalha numa conciliação diferente.
 async function buscarGlobalTodasConciliacoes(){
   const termo = document.getElementById('buscaGlobalInput').value.trim();
+  const deTxt = document.getElementById('buscaGlobalDe').value;
+  const ateTxt = document.getElementById('buscaGlobalAte').value;
+  const de = deTxt ? new Date(deTxt + 'T00:00:00') : null;
+  const ate = ateTxt ? new Date(ateTxt + 'T23:59:59') : null;
   const resultEl = document.getElementById('buscaGlobalResultado');
-  if(!termo){ resultEl.innerHTML = ''; return; }
+  if(!termo && !de && !ate){ resultEl.innerHTML = ''; return; }
   resultEl.innerHTML = '<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Procurando em todas as conciliações salvas...</div>';
 
-  const termNorm = normalize(termo);
+  const termNorm = termo ? normalize(termo) : '';
+  const dentroPeriodo = (dataStr) => {
+    if(!de && !ate) return true;
+    if(!dataStr) return false;
+    const d = new Date(dataStr);
+    if(de && d < de) return false;
+    if(ate && d > ate) return false;
+    return true;
+  };
   const keys = await storageList('conc:');
   if(!keys || keys.length === 0){
     resultEl.innerHTML = '<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nenhuma conciliação salva ainda.</div>';
@@ -1206,40 +1222,46 @@ async function buscarGlobalTodasConciliacoes(){
 
     (snap.report||[]).forEach(r => {
       const hay = normalize([r.idReport, r.favorecido, r.empresa, r.centroCusto, r.projeto].join(' '));
-      if(hay.includes(termNorm) || valorMatchesSearch(r.valor, termo)){
-        achados.push({ key, nomeSessao, savedAtTxt,
+      const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(r.valor, termo);
+      if(bateTexto && dentroPeriodo(r.pagoEm)){
+        achados.push({ key, nomeSessao, savedAtTxt, data: r.pagoEm,
           tipo: 'Pagamento (relatório)', desc: `ID ${r.idReport} · ${r.favorecido||''} · ${r.empresa||''}`,
           valor: r.valor, status: r.resultado === 'ok' ? '✅ Conciliado' : (r.resultado==='warn'?'🟡 Sugestão':'🔴 Sem correspondência') });
       }
     });
     (snap.debits||[]).forEach(d => {
       const hay = normalize([d.memo, d.name, d.fornecedor].join(' '));
-      if(hay.includes(termNorm) || valorMatchesSearch(d.amount, termo)){
-        achados.push({ key, nomeSessao, savedAtTxt,
+      const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(d.amount, termo);
+      if(bateTexto && dentroPeriodo(d.date)){
+        achados.push({ key, nomeSessao, savedAtTxt, data: d.date,
           tipo: 'Saída (extrato)', desc: `${d.fornecedor || d.memo}`, valor: Math.abs(d.amount),
           status: d.used ? '✅ Conciliado' : (d.identStatus==='auto'||d.identStatus==='manual' ? '✅ Identificado' : '🔴 Pendente') });
       }
     });
     (snap.credits||[]).forEach(c => {
       const hay = normalize([c.memo, c.name, c.cliente, c.nf].join(' '));
-      if(hay.includes(termNorm) || valorMatchesSearch(c.amount, termo)){
-        achados.push({ key, nomeSessao, savedAtTxt,
+      const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(c.amount, termo);
+      if(bateTexto && dentroPeriodo(c.date)){
+        achados.push({ key, nomeSessao, savedAtTxt, data: c.date,
           tipo: 'Entrada (extrato)', desc: `${c.cliente || c.memo}${c.nf ? ' · NF '+c.nf : ''}`, valor: Math.abs(c.amount),
           status: c.used ? '✅ Conciliado' : (c.cliente ? '✅ Identificado' : '🔴 Pendente') });
       }
     });
     (snap.reportReceber||[]).forEach(n => {
       const hay = normalize([n.numeroNF, n.nomeCliente, n.cnpjCliente].join(' '));
-      if(hay.includes(termNorm) || valorMatchesSearch(n.valorLiquido, termo) || valorMatchesSearch(n.valorServico, termo)){
-        achados.push({ key, nomeSessao, savedAtTxt,
+      const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(n.valorLiquido, termo) || valorMatchesSearch(n.valorServico, termo);
+      if(bateTexto && dentroPeriodo(n.dataEmissao)){
+        achados.push({ key, nomeSessao, savedAtTxt, data: n.dataEmissao,
           tipo: 'Nota fiscal a receber', desc: `NF ${n.numeroNF} · ${n.nomeCliente}`, valor: n.valorLiquido,
           status: n.resultado === 'ok' ? '✅ Recebido' : '🔴 Pendente' });
       }
     });
   }
 
+  achados.sort((a,b) => new Date(b.data||0) - new Date(a.data||0));
+
   if(achados.length === 0){
-    resultEl.innerHTML = '<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nada encontrado com esse termo em nenhuma conciliação salva.</div>';
+    resultEl.innerHTML = '<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nada encontrado com esse termo/período em nenhuma conciliação salva.</div>';
     return;
   }
   resultEl.innerHTML = achados.slice(0,30).map(a => `
@@ -1247,7 +1269,7 @@ async function buscarGlobalTodasConciliacoes(){
       <div>
         <div class="busca-global-session">${a.nomeSessao}</div>
         <div><b>${a.tipo}</b> — ${a.desc} ${a.status}</div>
-        <div class="meta">${fmtMoney(a.valor||0)} · salvo em ${a.savedAtTxt}</div>
+        <div class="meta">${a.data ? fmtDateISOtoBR(new Date(a.data))+' · ' : ''}${fmtMoney(a.valor||0)} · salvo em ${a.savedAtTxt}</div>
       </div>
       <button class="btn-resume" onclick="abrirSessaoDaBuscaGlobal('${a.key}')">Abrir</button>
     </div>
@@ -1363,6 +1385,8 @@ document.getElementById('btnBuscaGlobal').addEventListener('click', buscarGlobal
 document.getElementById('buscaGlobalInput').addEventListener('keydown', (e) => {
   if(e.key === 'Enter') buscarGlobalTodasConciliacoes();
 });
+document.getElementById('buscaGlobalDe').addEventListener('change', buscarGlobalTodasConciliacoes);
+document.getElementById('buscaGlobalAte').addEventListener('change', buscarGlobalTodasConciliacoes);
 document.getElementById('fileImportarBackup').addEventListener('change', (e)=>{
   const f = e.target.files[0];
   if(f) importarBackup(f);
@@ -1451,6 +1475,55 @@ function isResgateAplicacao(memo){
 }
 function isDevolucao(memo){
   return normalize(memo).includes('DEVOLU');
+}
+
+// ===================== MOTOR DE SUGESTÕES POR PADRÃO CONHECIDO =====================
+// Quando um lançamento não bate com nenhuma linha do relatório, em vez de deixar tudo em
+// branco pra digitar do zero, o sistema já procura padrões conhecidos no memo (nome de app,
+// posto, cartório, imposto etc.) e SUGERE o fornecedor/cliente + centro de custo mais
+// próximos — sempre como sugestão a confirmar, nunca decidindo por conta própria sem mostrar.
+// Pra adicionar um padrão novo, é só acrescentar uma linha nesta lista.
+const CIDADES_CONHECIDAS = [
+  'BELO HORIZONTE','POCOS DE CALDAS','JOINVILLE','NOVA SERRANA','POUSO ALEGRE','CARANDAI',
+  'CONGONHAS','SERRO','ALTO RIO DOCE','BARAO DE COCAIS','SAO GONCALO DO RIO ABAIXO',
+  'BELA VISTA DE MINAS','SANTANA DA VARGEM','ITABIRA','PASSOS','BRUMADINHO','JUIZ DE FORA',
+  'CONTAGEM','BETIM','SETE LAGOAS','GOVERNADOR VALADARES','UBERLANDIA','UBERABA','MONTES CLAROS',
+  'IPATINGA','DIVINOPOLIS','SABARA','SANTA LUZIA','VESPASIANO','RIBEIRAO DAS NEVES'
+];
+function detectarCidade(memo){
+  const n = normalize(memo);
+  return CIDADES_CONHECIDAS.find(c => n.includes(c)) || null;
+}
+
+const PADROES_SUGESTAO = [
+  { re: /IFOOD/, fornecedor: () => 'IFOOD', cc: '1161 - Pessoas - Refeições  - Lanches' },
+  { re: /UBER|99APP|99POP|99TAXI/, fornecedor: () => 'UBER/99', cc: '2160 - Deslocamentos - Uber/Taxi' },
+  { re: /POSTO|IPIRANGA|SHELL|PETROBRAS|BR DISTRIBUIDORA|ALE COMBUST|RAIZEN/, fornecedor: (m,orig) => (cleanClientName('',orig)||'POSTO DE COMBUSTÍVEL'), cc: '2100 - Deslocamentos - Combustível' },
+  { re: /ESTACIONAMENT/, fornecedor: () => 'ESTACIONAMENTO', cc: '2120 - Deslocamentos - Estacionamentos' },
+  { re: /SEM PARAR|CONECTCAR|VELOE|PEDAGIO/, fornecedor: () => 'PEDÁGIO', cc: '2110 - Deslocamentos - Pedágios' },
+  { re: /BOOKING|HOTEL|POUSADA|AIRBNB/, fornecedor: (m,orig) => (cleanClientName('',orig)||'HOSPEDAGEM'), cc: '2130 - Deslocamentos - Hospedagens' },
+  { re: /LATAM|GOL LINHAS|AZUL LINHAS|CIA AEREA|VOEPASS/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CIA AÉREA'), cc: '2150 - Deslocamentos - Passagens' },
+  { re: /CARTORIO/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CARTÓRIO'), cc: '10120 - Jurídico - Cartórios' },
+  { re: /\bAWS\b|AMAZON WEB/, fornecedor: () => 'AMAZON AWS', cc: '5140 - TI - AWS/Cloud' },
+  { re: /MICROSOFT 365|GOOGLE WORKSPACE|ASSINATURA.*SISTEMA/, fornecedor: (m,orig) => (cleanClientName('',orig)||'ASSINATURA DE SISTEMA'), cc: '12060 - Administrativo - Assinaturas de Sistemas' },
+  { re: /CORREIOS/, fornecedor: () => 'CORREIOS', cc: '7110 - Logística - Correios' },
+  { re: /\bIPVA\b/, fornecedor: () => 'DETRAN (IPVA)', cc: '11140 - Frota - IPVA' },
+  { re: /CEMIG|ENERGISA|LIGHT\b|ENEL\b|COPEL\b/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CONCESSIONÁRIA DE ENERGIA'), cc: '3120 - Infraestrutura - Energia Elétrica' },
+  { re: /COPASA|SABESP|AGUA E ESGOTO/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CONCESSIONÁRIA DE ÁGUA'), cc: '3130 - Infraestrutura - Água e Esgoto' },
+  { re: /CONDOMINIO/, fornecedor: (m,orig) => (cleanClientName('',orig)||'CONDOMÍNIO'), cc: '3110 - Infraestrutura - Condomínio' },
+  { re: /\bIPTU\b/, fornecedor: (m) => { const c = detectarCidade(m); return c ? 'PREFEITURA DE ' + c.replace(/\b\w/g, l=>l.toUpperCase()) : 'PREFEITURA (confirme o município)'; }, cc: '#135 - 19200 - Tributos -Municipais - IPTU' },
+];
+
+// Aplica os padrões acima no memo (bruto e normalizado) e devolve a melhor sugestão encontrada,
+// ou null se nada bateu — nesse caso os campos continuam em branco pra digitar manualmente.
+function sugerirClassificacao(memoOriginal){
+  const n = normalize(memoOriginal);
+  for(const p of PADROES_SUGESTAO){
+    if(p.re.test(n)){
+      return { fornecedor: p.fornecedor(n, memoOriginal), centroCusto: p.cc };
+    }
+  }
+  return null;
 }
 function nameSimilarity(a,b){
   const na = normalize(a), nb = normalize(b);
@@ -2594,7 +2667,15 @@ function renderResults(){
       if(acaoHtml !== null){
         html += `<td>${acaoHtml}</td>`;
       } else {
-        html += `<td>
+        const sugestaoRapida = sugerirClassificacao(t.memo);
+        html += `<td>`;
+        if(sugestaoRapida){
+          html += `<div style="background:var(--ok-bg);border:1px solid var(--ok);border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:11.5px;">
+            💡 <b>Sugestão:</b> ${sugestaoRapida.fornecedor} · ${sugestaoRapida.centroCusto}
+            <button class="link-btn" style="text-decoration:none;color:var(--ok);font-weight:700;margin-left:6px;" onclick="confirmarSugestaoRapida('${rowKey}','${item.tipo}')">✓ Confirmar sugestão</button>
+          </div>`;
+        }
+        html += `
           <input type="text" class="edit-inline busca-geral-input" data-fitid="${rowKey}" data-tipo="${item.tipo}" placeholder="Buscar por valor, nome, CNPJ/CPF, ID, NF...">
           <div class="busca-geral-resultado" id="buscaGeral-${rowKey}"></div>
           <div class="criar-lancamento-area" style="margin-top:6px;">
@@ -3227,18 +3308,23 @@ function toggleCriarLancamento(fitid, tipo){
 function renderCriarLancamento(fitid, tipo){
   const el = document.getElementById('criarLancamento-' + fitid);
   if(!el) return;
+  const tx = tipo === 'saida' ? debits.find(x => x.fitid === fitid) : credits.find(x => x.fitid === fitid);
+  const sugestao = tx ? sugerirClassificacao(tx.memo) : null;
+  const avisoSugestao = sugestao ? `<div style="font-size:11px;color:var(--ok);margin-bottom:4px;">💡 Sugestão automática já preenchida abaixo (padrão "${sugestao.centroCusto.split(' - ').slice(-1)[0]}") — confira e confirme, ou ajuste se não for isso.</div>` : '';
   if(tipo === 'saida'){
     el.innerHTML = `
-      <input type="text" class="edit-inline" id="criarForn-${fitid}" placeholder="Nome do fornecedor" style="margin-bottom:4px;">
-      <select class="edit-inline" id="criarCC-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(centroCustoOptions, '', '— Centro de custo —')}</select>
+      ${avisoSugestao}
+      <input type="text" class="edit-inline" id="criarForn-${fitid}" placeholder="Nome do fornecedor" value="${sugestao ? sugestao.fornecedor.replace(/"/g,'&quot;') : ''}" style="margin-bottom:4px;">
+      <select class="edit-inline" id="criarCC-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(centroCustoOptions, sugestao ? sugestao.centroCusto : '', '— Centro de custo —')}</select>
       <select class="edit-inline" id="criarProj-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(projetoOptions, '', '— Projeto —')}</select>
       <button class="btn-cloud" style="padding:6px 12px;font-size:12px;" onclick="confirmarCriarLancamentoSaida('${fitid}')">✓ Identificar sem vincular ao relatório</button>
     `;
   } else {
     el.innerHTML = `
-      <input type="text" class="edit-inline" id="criarCliente-${fitid}" placeholder="Nome do cliente" style="margin-bottom:4px;">
+      ${avisoSugestao}
+      <input type="text" class="edit-inline" id="criarCliente-${fitid}" placeholder="Nome do cliente" value="${sugestao ? sugestao.fornecedor.replace(/"/g,'&quot;') : ''}" style="margin-bottom:4px;">
       <input type="text" class="edit-inline" id="criarNF-${fitid}" placeholder="Nº NF (opcional)" style="margin-bottom:4px;max-width:120px;">
-      <select class="edit-inline" id="criarCCReceb-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(centroCustoOptions, document.getElementById('cfgCentroCustoReceber').value||'', '— Centro de custo —')}</select>
+      <select class="edit-inline" id="criarCCReceb-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(centroCustoOptions, sugestao ? sugestao.centroCusto : (document.getElementById('cfgCentroCustoReceber').value||''), '— Centro de custo —')}</select>
       <select class="edit-inline" id="criarProjReceb-${fitid}" style="margin-bottom:4px;">${buildRestrictedSelect(projetoOptions, '', '— Projeto —')}</select>
       <button class="btn-cloud" style="padding:6px 12px;font-size:12px;" onclick="confirmarCriarLancamentoEntrada('${fitid}')">✓ Identificar sem vincular a nota fiscal</button>
     `;
@@ -3278,6 +3364,30 @@ function confirmarCriarLancamentoEntrada(fitid){
 window.toggleCriarLancamento = toggleCriarLancamento;
 window.confirmarCriarLancamentoSaida = confirmarCriarLancamentoSaida;
 window.confirmarCriarLancamentoEntrada = confirmarCriarLancamentoEntrada;
+
+// Confirmação de um clique só, direto no banner de sugestão da aba Extrato Completo — usa
+// exatamente a mesma sugestão mostrada na tela, sem precisar abrir o formulário manual.
+function confirmarSugestaoRapida(fitid, tipo){
+  if(tipo === 'saida'){
+    const d = debits.find(x => x.fitid === fitid);
+    if(!d) return;
+    const sugestao = sugerirClassificacao(d.memo);
+    if(!sugestao) return;
+    d.fornecedor = sugestao.fornecedor;
+    d.centroCusto = sugestao.centroCusto;
+    d.identStatus = 'manual';
+  } else {
+    const c = credits.find(x => x.fitid === fitid);
+    if(!c) return;
+    const sugestao = sugerirClassificacao(c.memo);
+    if(!sugestao) return;
+    c.cliente = sugestao.fornecedor;
+    c.centroCusto = sugestao.centroCusto;
+  }
+  renderResults();
+  persistCurrentSession();
+}
+window.confirmarSugestaoRapida = confirmarSugestaoRapida;
 
 /* ============================= TABS / SEARCH ============================= */
 document.getElementById('tabs').addEventListener('click', (e)=>{
