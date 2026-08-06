@@ -478,6 +478,21 @@
       <div id="buscaGlobalResultado"></div>
     </div>
 
+    <div class="busca-global-bar" style="background:#EFE6D8;">
+      <span class="busca-global-label">📅 Fechamento mensal — junta todas as conciliações diárias salvas do mês escolhido</span>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+        <select id="fechamentoMes" style="padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+          <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
+          <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
+          <option value="6">Julho</option><option value="7">Agosto</option><option value="8">Setembro</option>
+          <option value="9">Outubro</option><option value="10">Novembro</option><option value="11">Dezembro</option>
+        </select>
+        <input type="number" id="fechamentoAno" value="2026" min="2020" max="2099" style="width:80px;padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <button id="btnGerarFechamentoMensal" class="btn-aplicar-periodo">Gerar fechamento do mês</button>
+      </div>
+      <div id="fechamentoMensalResultado"></div>
+    </div>
+
     <div id="savedSessions" class="saved-sessions"></div>
 
     <div class="upload-grid">
@@ -1085,6 +1100,8 @@ let searchTerm = '';
 let ofxMeta = { saldoFinal:null, dtAsOf:null, dtStart:null, dtEnd:null, bankId:'', branchId:'', acctId:'' };
 let saldoInicialInformado = null;
 let currentSessionKey = null;
+const MESES_NOMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+let fechamentoMensalCache = null; // guarda o resultado do último fechamento mensal gerado, pra poder exportar
 let lastSavedAt = null;
 
 /* ============================= NUVEM (Microsoft 365 / OneDrive compartilhado) ============================= */
@@ -1289,14 +1306,45 @@ document.getElementById('btnConectarCloud').addEventListener('click', async ()=>
 /* ============================= STORAGE (persistência) ============================= */
 const STORAGE_NS = 'conciliador_conta_mae:';
 
+// O arquivo compartilhado guarda, pra cada conciliação salva, uma cópia completa dos arquivos
+// originais (extrato/relatório/notas em base64) — isso permite reabrir e reajustar o período
+// de qualquer sessão. Só que, com o tempo, isso cresce demais e o Microsoft Graph passa a
+// recusar a gravação (erro 400/413 — "arquivo grande demais pra salvar de uma vez"). Pra evitar
+// isso, só as sessões mais recentes mantêm essa cópia completa; as mais antigas continuam
+// consultáveis (pela busca, pelas abas) mas perdem a cópia bruta — se precisar reajustar o
+// período de uma conciliação antiga, é só reanexar o arquivo original de novo.
+const MAX_SESSOES_COM_ARQUIVO_BRUTO = 6;
+function podarBytesBrutosDeSessoesAntigas(sessions, limite){
+  limite = limite || MAX_SESSOES_COM_ARQUIVO_BRUTO;
+  const chaves = Object.keys(sessions).filter(k => k.indexOf('conc:') === 0);
+  const comData = chaves.map(k => ({ k, savedAt: sessions[k] && sessions[k].savedAt ? new Date(sessions[k].savedAt).getTime() : 0 }));
+  comData.sort((a,b) => b.savedAt - a.savedAt);
+  const antigas = comData.slice(limite);
+  antigas.forEach(({k}) => {
+    const s = sessions[k];
+    if(s && (s.ofxRawB64 || s.xlsxRawB64 || s.nfseRawB64 || s.ofxRawText)){
+      s.ofxRawB64 = null; s.xlsxRawB64 = null; s.nfseRawB64 = null; s.ofxRawText = null;
+      s.arquivoOriginalRemovido = true; // sinaliza pra tela avisar, se precisar
+    }
+  });
+}
+
 async function storageSet(key, value){
   if(modoCompartilhado){
     try{
       if(!cloudDataCache) await cloudFetch();
       cloudDataCache.sessions[key] = value;
-      await cloudSave();
+      podarBytesBrutosDeSessoesAntigas(cloudDataCache.sessions);
+      try{
+        await cloudSave();
+      }catch(e1){
+        // ainda grande demais mesmo depois da limpeza normal — tenta uma limpeza bem mais
+        // agressiva (só a sessão atual mantém o arquivo bruto) antes de desistir de vez.
+        podarBytesBrutosDeSessoesAntigas(cloudDataCache.sessions, 1);
+        await cloudSave();
+      }
       return true;
-    }catch(e){ alert(e.message); return false; }
+    }catch(e){ alert(e.message + '\n\nSe o erro persistir, pode ser que o arquivo compartilhado no OneDrive esteja muito grande — me avise pra investigarmos juntos.'); return false; }
   }
   try{
     if(window.storage && typeof window.storage.set === 'function'){
@@ -1428,7 +1476,7 @@ function serializeSession(){
       rowIndex: r.rowIndex, raw: r.raw,
       valor: r.valor, pagoEm: r.pagoEm ? r.pagoEm.toISOString() : null,
       status: r.status, favorecido: r.favorecido, empresa: r.empresa,
-      centroCusto: r.centroCusto, projeto: r.projeto, descricao: r.descricao, idReport: r.idReport,
+      centroCusto: r.centroCusto, projeto: r.projeto, observacoes: r.observacoes, descricao: r.descricao, idReport: r.idReport,
       idTransacao: r.idTransacao, resultado: r.resultado,
       matchedTxFitid: r.matchedTx ? r.matchedTx.fitid : null,
       candidateFitids: r.candidates.map(c => ({fitid:c.tx.fitid, dateDiff:c.dateDiff, nameScore:c.nameScore})),
@@ -1476,7 +1524,7 @@ function deserializeSession(snap){
     rowIndex: r.rowIndex, raw: r.raw, valor: r.valor,
     pagoEm: r.pagoEm ? new Date(r.pagoEm) : null,
     status: r.status, favorecido: r.favorecido, empresa: r.empresa,
-    centroCusto: r.centroCusto, projeto: r.projeto, descricao: r.descricao, idReport: r.idReport,
+    centroCusto: r.centroCusto, projeto: r.projeto, observacoes: r.observacoes, descricao: r.descricao, idReport: r.idReport,
     idTransacao: r.idTransacao, resultado: r.resultado,
     matchedTx: r.matchedTxFitid ? fitidMap[r.matchedTxFitid] : null,
     candidates: r.candidateFitids.map(c => ({tx: fitidMap[c.fitid], dateDiff:c.dateDiff, nameScore:c.nameScore})).filter(c=>c.tx),
@@ -1607,6 +1655,167 @@ async function abrirSessaoDaBuscaGlobal(key){
 }
 window.abrirSessaoDaBuscaGlobal = abrirSessaoDaBuscaGlobal;
 
+// Junta, num só lugar, TODOS os lançamentos (de qualquer conciliação diária já salva) cuja
+// data cai dentro do mês escolhido — mesmo que tenham vindo de uploads/sessões diferentes.
+// Isso é o "fechamento mensal": a conciliação continua sendo feita dia a dia, mas o resultado
+// pra contabilidade precisa ser visto e exportado por mês inteiro.
+async function gerarFechamentoMensal(){
+  const mes = parseInt(document.getElementById('fechamentoMes').value, 10);
+  const ano = parseInt(document.getElementById('fechamentoAno').value, 10);
+  const resultEl = document.getElementById('fechamentoMensalResultado');
+  resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Juntando todas as conciliações salvas de ${MESES_NOMES[mes]}/${ano}...</div>`;
+
+  const inicioMes = new Date(ano, mes, 1, 0, 0, 0);
+  const fimMes = new Date(ano, mes + 1, 0, 23, 59, 59);
+  const dentroDoMes = (dataStr) => {
+    if(!dataStr) return false;
+    const d = new Date(dataStr);
+    return d >= inicioMes && d <= fimMes;
+  };
+
+  const keys = await storageList('conc:');
+  const debitosMes = new Map();
+  const creditosMes = new Map();
+  const reportMes = new Map();
+  const notasMes = new Map();
+  let sessoesUsadas = 0;
+
+  for(const key of keys){
+    const snap = await storageGet(key);
+    if(!snap) continue;
+    let usouEssaSessao = false;
+    (snap.debits||[]).forEach(d => { if(dentroDoMes(d.date)){ debitosMes.set(d.fitid, d); usouEssaSessao = true; } });
+    (snap.credits||[]).forEach(c => { if(dentroDoMes(c.date)){ creditosMes.set(c.fitid, c); usouEssaSessao = true; } });
+    (snap.report||[]).forEach(r => {
+      if(dentroDoMes(r.pagoEm)){
+        reportMes.set(r.idReport + '|' + r.empresa + '|' + r.valor, r);
+        usouEssaSessao = true;
+      }
+    });
+    (snap.reportReceber||[]).forEach(n => {
+      if(dentroDoMes(n.dataEmissao)){
+        notasMes.set(n.numeroNF + '|' + n.cnpjCliente, n);
+        usouEssaSessao = true;
+      }
+    });
+    if(usouEssaSessao) sessoesUsadas++;
+  }
+
+  const debitosArr = [...debitosMes.values()];
+  const creditosArr = [...creditosMes.values()];
+  const reportArr = [...reportMes.values()];
+  const notasArr = [...notasMes.values()];
+
+  if(debitosArr.length === 0 && creditosArr.length === 0){
+    resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nenhum lançamento de ${MESES_NOMES[mes]}/${ano} encontrado nas conciliações salvas. Confira se já processou o extrato desse mês.</div>`;
+    return;
+  }
+
+  const totalDebitos = debitosArr.reduce((s,d)=>s+Math.abs(d.amount),0);
+  const totalCreditos = creditosArr.reduce((s,c)=>s+Math.abs(c.amount),0);
+  const debitosConciliados = debitosArr.filter(d=>d.used || d.identStatus==='auto' || d.identStatus==='manual' || d.estornado).length;
+  const debitosPendentes = debitosArr.length - debitosConciliados;
+  const creditosConciliados = creditosArr.filter(c=>c.used || c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)).length;
+  const creditosPendentes = creditosArr.length - creditosConciliados;
+  const reportOk = reportArr.filter(r=>r.resultado==='ok').length;
+  const reportPendente = reportArr.length - reportOk;
+  const totalPendencias = debitosPendentes + creditosPendentes + reportPendente;
+
+  fechamentoMensalCache = { mes, ano, debitosArr, creditosArr, reportArr, notasArr };
+
+  resultEl.innerHTML = `
+    <div style="margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px;">
+      <div style="font-weight:700;color:var(--navy);margin-bottom:10px;">${MESES_NOMES[mes]} / ${ano} — ${debitosArr.length + creditosArr.length} lançamentos do extrato, juntados de ${sessoesUsadas} conciliação(ões) diária(s) salva(s)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:10px;">
+        <div><b style="font-size:16px;">${fmtMoney(totalDebitos)}</b><br><span style="font-size:11px;color:var(--ink-soft);">Total de saídas</span></div>
+        <div><b style="font-size:16px;">${fmtMoney(totalCreditos)}</b><br><span style="font-size:11px;color:var(--ink-soft);">Total de entradas</span></div>
+        <div><b style="font-size:16px;color:${debitosPendentes===0?'var(--ok)':'var(--bad)'};">${debitosConciliados}/${debitosArr.length}</b><br><span style="font-size:11px;color:var(--ink-soft);">Saídas identificadas</span></div>
+        <div><b style="font-size:16px;color:${creditosPendentes===0?'var(--ok)':'var(--bad)'};">${creditosConciliados}/${creditosArr.length}</b><br><span style="font-size:11px;color:var(--ink-soft);">Entradas identificadas</span></div>
+        <div><b style="font-size:16px;color:${reportPendente===0?'var(--ok)':'var(--bad)'};">${reportOk}/${reportArr.length}</b><br><span style="font-size:11px;color:var(--ink-soft);">Linhas do relatório conciliadas</span></div>
+      </div>
+      ${totalPendencias === 0
+        ? '<div style="color:var(--ok);font-weight:700;">✅ Mês totalmente conciliado — pronto para o fechamento contábil.</div>'
+        : '<div style="color:var(--bad);font-weight:700;">⚠️ Ainda tem '+totalPendencias+' item(ns) pendente(s) neste mês — resolva nas conciliações diárias (pela busca acima) antes de fechar.</div>'}
+      <button class="btn-aplicar-periodo" style="margin-top:10px;" onclick="exportarFechamentoMensal()">Exportar fechamento mensal (.xlsx)</button>
+    </div>
+  `;
+}
+
+function exportarFechamentoMensal(){
+  if(!fechamentoMensalCache){ alert('Gere o fechamento do mês primeiro.'); return; }
+  const { mes, ano, debitosArr, creditosArr, reportArr, notasArr } = fechamentoMensalCache;
+  const linhas = [];
+
+  debitosArr.forEach(d => {
+    const r = reportArr.find(x => x.matchedTx && x.matchedTx.fitid === d.fitid);
+    let situacao;
+    if(d.estornado) situacao = 'Estornado (pagamento revertido)';
+    else if(r) situacao = r.manualConfirm ? 'Conciliado (manual)' : 'Conciliado (automático)';
+    else if(d.identStatus === 'auto') situacao = 'Identificado automático (banco)';
+    else if(d.identStatus === 'manual') situacao = 'Identificado manualmente';
+    else situacao = 'Pendente';
+    linhas.push({
+      'DATA': fmtDateISOtoBR(new Date(d.date)), 'TIPO': 'Saída', 'VALOR (R$)': Math.abs(d.amount),
+      'FORNECEDOR': r ? (r.favorecido || '') : (d.fornecedor || ''),
+      'CENTRO DE CUSTO': r ? (r.centroCusto || '') : (d.centroCusto || ''),
+      'PROJETO': r ? (r.projeto || '') : (d.projeto || ''),
+      'ID RELATÓRIO / NF': r ? r.idReport : '',
+      'SITUAÇÃO': situacao,
+      'OBSERVAÇÕES': (r ? r.observacoes : '') || d.observacoes || '',
+      'MEMO NO EXTRATO': d.memo
+    });
+  });
+  creditosArr.forEach(c => {
+    let situacao;
+    if(c.used) situacao = 'Conciliado (nota fiscal)';
+    else if(isResgateAplicacao(c.memo)) situacao = 'Movimento interno (resgate)';
+    else if(isDevolucao(c.memo)) situacao = 'Movimento interno (devolução)';
+    else if(isMesmaTitularidade(c.memo)) situacao = 'Movimento interno (mesma titularidade)';
+    else if(c.cliente) situacao = 'Identificado manualmente';
+    else situacao = 'Pendente';
+    linhas.push({
+      'DATA': fmtDateISOtoBR(new Date(c.date)), 'TIPO': 'Entrada', 'VALOR (R$)': Math.abs(c.amount),
+      'FORNECEDOR': c.cliente || '', 'CENTRO DE CUSTO': c.centroCusto || '', 'PROJETO': c.projeto || '',
+      'ID RELATÓRIO / NF': c.nf || '', 'SITUAÇÃO': situacao,
+      'OBSERVAÇÕES': c.observacoes || '',
+      'MEMO NO EXTRATO': c.memo
+    });
+  });
+  linhas.sort((a,b) => a['DATA'].split('/').reverse().join('-').localeCompare(b['DATA'].split('/').reverse().join('-')));
+
+  const wsUnica = XLSX.utils.json_to_sheet(linhas);
+  wsUnica['!cols'] = [{wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:26},{wch:30},{wch:45}];
+  const wbOut = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbOut, wsUnica, 'Fechamento ' + MESES_NOMES[mes]);
+
+  const pendentesRelatorio = reportArr.filter(r => r.resultado === 'warn' || r.resultado === 'bad');
+  if(pendentesRelatorio.length > 0){
+    const totalPendente = pendentesRelatorio.reduce((s,r)=> s + (r.valor||0), 0);
+    const pendentesRows = pendentesRelatorio.map(r => ({
+      'ID': r.idReport, 'EMPRESA': r.empresa, 'CENTRO DE CUSTO': r.centroCusto, 'PROJETO': r.projeto || '',
+      'FORNECEDOR': r.favorecido, 'VALOR (R$)': r.valor,
+      'SITUAÇÃO': r.resultado === 'warn' ? 'Sugestão não confirmada' : 'Sem correspondência no extrato'
+    }));
+    pendentesRows.push({ 'ID':'','EMPRESA':'','CENTRO DE CUSTO':'','PROJETO':'','FORNECEDOR':'TOTAL EM ABERTO','VALOR (R$)':totalPendente,'SITUAÇÃO':'' });
+    const wsPendentes = XLSX.utils.json_to_sheet(pendentesRows);
+    wsPendentes['!cols'] = [{wch:8},{wch:10},{wch:32},{wch:32},{wch:32},{wch:13},{wch:24}];
+    XLSX.utils.book_append_sheet(wbOut, wsPendentes, 'Pagamentos em Aberto');
+  }
+  const notasPendentes = notasArr.filter(n => n.resultado !== 'ok');
+  if(notasPendentes.length > 0){
+    const notasRows = notasPendentes.map(n => ({
+      'Nº NF': n.numeroNF, 'CLIENTE': n.nomeCliente, 'CNPJ': n.cnpjCliente,
+      'VALOR LÍQUIDO (R$)': n.valorLiquido, 'STATUS': 'Pendente de recebimento'
+    }));
+    const wsNotas = XLSX.utils.json_to_sheet(notasRows);
+    wsNotas['!cols'] = [{wch:10},{wch:32},{wch:20},{wch:16},{wch:20}];
+    XLSX.utils.book_append_sheet(wbOut, wsNotas, 'Notas Fiscais Pendentes');
+  }
+
+  XLSX.writeFile(wbOut, `fechamento_${MESES_NOMES[mes].toLowerCase()}_${ano}.xlsx`);
+}
+window.exportarFechamentoMensal = exportarFechamentoMensal;
+
 async function refreshSavedSessionsList(){
   const listEl = document.getElementById('savedSessions');
   if(!listEl) return;
@@ -1701,6 +1910,12 @@ async function importarBackup(file){
 
 document.getElementById('btnExportarBackup').addEventListener('click', exportarBackup);
 document.getElementById('btnBuscaGlobal').addEventListener('click', () => buscarGlobalTodasConciliacoes());
+document.getElementById('btnGerarFechamentoMensal').addEventListener('click', gerarFechamentoMensal);
+(function definirMesAnoAtual(){
+  const hoje = new Date();
+  document.getElementById('fechamentoMes').value = String(hoje.getMonth());
+  document.getElementById('fechamentoAno').value = String(hoje.getFullYear());
+})();
 document.getElementById('buscaGlobalInput').addEventListener('keydown', (e) => {
   if(e.key === 'Enter') buscarGlobalTodasConciliacoes();
 });
@@ -2401,6 +2616,7 @@ function runReconciliation(opts){
     const ehMovimentoInterno = isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
     c.centroCusto = c.centroCusto || (ehMovimentoInterno ? '' : centroCustoReceberPadrao);
     c.projeto = c.projeto || '';
+    c.observacoes = c.observacoes || '';
   });
   const bankName = (document.getElementById('cfgBankName').value || 'SICOOB').trim().toUpperCase() || 'SICOOB';
   debits.forEach(d => {
@@ -2418,6 +2634,7 @@ function runReconciliation(opts){
       d.centroCusto = d.centroCusto || '';
     }
     d.projeto = d.projeto || '';
+    d.observacoes = d.observacoes || '';
   });
 
   // Restaura o que já tinha sido identificado/classificado manualmente antes deste reprocessamento
@@ -2525,6 +2742,7 @@ function runReconciliation(opts){
       empresa: r['EMPRESA'] || '',
       centroCusto: r['CENTRO DE CUSTO'] || '',
       projeto: r['PROJETO'] || '',
+      observacoes: r['OBSERVAÇÕES'] || r['OBSERVACOES'] || '',
       descricao: r['DESCRICAO'] || '',
       idReport: r['ID'] || '',
       idTransacao: r['ID TRANSAÇÃO'] || r['ID TRANSACAO'] || '',
@@ -3182,7 +3400,7 @@ function renderResults(){
       return;
     }
     let html = `<table class="results"><thead><tr>
-      <th>Data</th><th>Valor</th><th>Memo (extrato)</th><th>Cliente</th><th>Nº NF</th><th>Centro de custo</th><th>Projeto</th>
+      <th>Data</th><th>Valor</th><th>Memo (extrato)</th><th>Cliente</th><th>Nº NF</th><th>Centro de custo</th><th>Projeto</th><th>Observações</th>
     </tr></thead><tbody>`;
     list.forEach((c) => {
       const idx = credits.indexOf(c);
@@ -3194,6 +3412,7 @@ function renderResults(){
         <td><input type="text" class="edit-inline nf" data-idx="${idx}" data-field="nf" value="${(c.nf||'').replace(/"/g,'&quot;')}" placeholder="opcional"></td>
         <td>${buildAutocompleteInput('centroCusto', c.centroCusto, '— Centro de custo —', `data-idx="${idx}" data-field="centroCusto" data-modelo="credit"`)}</td>
         <td>${buildAutocompleteInput('projeto', c.projeto, '— Projeto —', `data-idx="${idx}" data-field="projeto" data-modelo="credit"`)}</td>
+        <td><input type="text" class="edit-inline" data-idx="${idx}" data-field="observacoes" value="${(c.observacoes||'').replace(/"/g,'&quot;')}" placeholder="opcional" style="min-width:140px;"></td>
       </tr>`;
     });
     html += '</tbody></table>';
@@ -3262,7 +3481,7 @@ function renderResults(){
   let html = '';
   if(rows.length > 0){
     html += `<table class="results"><thead><tr>
-      <th>ID</th><th>Empresa</th><th>Centro de custo</th><th>Projeto</th><th>Fornecedor</th><th>Valor</th><th>Pago em</th>`;
+      <th>ID</th><th>Empresa</th><th>Centro de custo</th><th>Projeto</th><th>Fornecedor</th><th>Valor</th><th>Pago em</th><th>Observações</th>`;
     if(currentTab === 'ok') html += `<th>Lançamento vinculado</th>`;
     if(currentTab === 'pendentes') html += `<th>Situação</th><th>Pagamentos no extrato / motivo</th>`;
     html += `</tr></thead><tbody>`;
@@ -3275,7 +3494,8 @@ function renderResults(){
         <td>${buildAutocompleteInput('projeto', r.projeto||'', '— Projeto —', `data-rowidx="${r.rowIndex}" data-campo="report-proj"`)}</td>
         <td><input type="text" class="edit-inline fornecedor-input" data-rowidx="${r.rowIndex}" value="${(r.favorecido||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor"></td>
         <td><input type="text" class="edit-inline valor-input" data-rowidx="${r.rowIndex}" value="${r.valor!==null ? fmtMoney(r.valor) : ''}" placeholder="R$ 0,00" style="text-align:right;max-width:110px;"></td>
-        <td class="data">${r.pagoEm ? fmtDateISOtoBR(r.pagoEm) : '-'}</td>`;
+        <td class="data">${r.pagoEm ? fmtDateISOtoBR(r.pagoEm) : '-'}</td>
+        <td><input type="text" class="edit-inline observacoes-input" data-rowidx="${r.rowIndex}" value="${(r.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="opcional" style="min-width:140px;"></td>`;
 
       if(currentTab === 'ok'){
         const tx = r.matchedTx;
@@ -3337,7 +3557,7 @@ function renderResults(){
     if(debitsPend.length > 0){
       html += `<h4 class="section-title">Lançamentos do extrato sem vínculo no relatório (só saem daqui quando você identificar)</h4>`;
       html += `<table class="results"><thead><tr>
-        <th>Data</th><th>Valor</th><th>Memo</th><th>Fornecedor (informe quem é)</th><th>Centro de custo</th><th>Projeto</th><th></th>
+        <th>Data</th><th>Valor</th><th>Memo</th><th>Fornecedor (informe quem é)</th><th>Centro de custo</th><th>Projeto</th><th>Observações</th><th></th>
       </tr></thead><tbody>`;
       debitsPend.forEach(d => {
         html += `<tr>
@@ -3347,6 +3567,7 @@ function renderResults(){
           <td><input type="text" class="edit-inline debit-fornecedor-input" data-fitid="${d.fitid}" value="${(d.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome, Pix ou CPF identificado"></td>
           <td>${buildAutocompleteInput('centroCusto', d.centroCusto, '— Centro de custo —', `data-fitid="${d.fitid}" data-campo="debit-cc"`)}</td>
           <td>${buildAutocompleteInput('projeto', d.projeto, '— Projeto —', `data-fitid="${d.fitid}" data-campo="debit-proj"`)}</td>
+          <td><input type="text" class="edit-inline debit-observacoes-input" data-fitid="${d.fitid}" value="${(d.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="opcional" style="min-width:140px;"></td>
           <td><button class="link-btn" onclick="marcarDebitoIdentificado('${d.fitid}')">✓ Identificado</button></td>
         </tr>`;
       });
@@ -3377,6 +3598,14 @@ function renderResults(){
       persistCurrentSession();
     });
   });
+  wrap.querySelectorAll('.observacoes-input').forEach(inp => {
+    inp.addEventListener('input', (e) => {
+      const r = report.find(x => x.rowIndex === +e.target.dataset.rowidx);
+      if(!r) return;
+      r.observacoes = e.target.value;
+    });
+    inp.addEventListener('change', persistCurrentSession);
+  });
   wrap.querySelectorAll('.cc-ac-input[data-campo="report-cc"]').forEach(sel => {
     sel.addEventListener('ccselect', (e) => {
       const r = report.find(x => x.rowIndex === +e.target.dataset.rowidx);
@@ -3398,6 +3627,14 @@ function renderResults(){
       const d = debits.find(x => x.fitid === e.target.dataset.fitid);
       if(!d) return;
       d.fornecedor = e.target.value;
+    });
+    inp.addEventListener('change', persistCurrentSession);
+  });
+  wrap.querySelectorAll('.debit-observacoes-input').forEach(inp => {
+    inp.addEventListener('input', (e) => {
+      const d = debits.find(x => x.fitid === e.target.dataset.fitid);
+      if(!d) return;
+      d.observacoes = e.target.value;
     });
     inp.addEventListener('change', persistCurrentSession);
   });
@@ -3823,6 +4060,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
       'ID RELATÓRIO / NF': r ? r.idReport : '',
       'DATA DE PAGAMENTO': (r && r.pagoEm) ? fmtDateISOtoBR(r.pagoEm) : fmtDateISOtoBR(d.date),
       'SITUAÇÃO': situacao,
+      'OBSERVAÇÕES': (r ? r.observacoes : '') || d.observacoes || '',
       'MEMO NO EXTRATO': d.memo
     });
   });
@@ -3845,6 +4083,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
       'ID RELATÓRIO / NF': c.nf || '',
       'DATA DE PAGAMENTO': fmtDateISOtoBR(c.date),
       'SITUAÇÃO': situacao,
+      'OBSERVAÇÕES': c.observacoes || '',
       'MEMO NO EXTRATO': c.memo
     });
   });
@@ -3858,7 +4097,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
 
   const wsUnica = XLSX.utils.json_to_sheet(linhasUnificadas);
   wsUnica['!cols'] = [
-    {wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:20},{wch:26},{wch:45}
+    {wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:20},{wch:26},{wch:30},{wch:45}
   ];
   const wbOut = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wbOut, wsUnica, 'Conciliação Completa');
