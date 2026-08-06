@@ -523,6 +523,19 @@
 
     <div class="fechamento-panel" id="fechamentoPanel"></div>
 
+    <div class="busca-global-bar">
+      <span class="busca-global-label">🔍 Buscar em outros períodos já salvos (sem perder o que está na tela)</span>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="buscaGlobalInput2" placeholder="Nome, valor, ID, NF, CNPJ/CPF..." style="flex:1;min-width:200px;">
+        <label style="font-size:12px;color:var(--ink-soft);">Período (opcional)</label>
+        <input type="date" id="buscaGlobalDe2" style="width:135px;">
+        <span style="font-size:12px;color:var(--ink-soft);">até</span>
+        <input type="date" id="buscaGlobalAte2" style="width:135px;">
+        <button id="btnBuscaGlobal2" class="btn-aplicar-periodo">Buscar</button>
+      </div>
+      <div id="buscaGlobalResultado2"></div>
+    </div>
+
     <div class="period-edit-bar">
       <span class="period-edit-label">Ajustar período a conciliar:</span>
       <div class="date-with-arrows">
@@ -1493,13 +1506,14 @@ async function persistCurrentSession(){
 // Busca um termo (e/ou período) em TODAS as conciliações salvas, sem precisar trocar de tela
 // nem reanexar arquivo nenhum — útil pra conferir se um pagamento/recebimento de um mês
 // anterior (ou seguinte) já foi tratado, enquanto se trabalha numa conciliação diferente.
-async function buscarGlobalTodasConciliacoes(){
-  const termo = document.getElementById('buscaGlobalInput').value.trim();
-  const deTxt = document.getElementById('buscaGlobalDe').value;
-  const ateTxt = document.getElementById('buscaGlobalAte').value;
+async function buscarGlobalTodasConciliacoes(suf){
+  suf = suf || '';
+  const termo = document.getElementById('buscaGlobalInput'+suf).value.trim();
+  const deTxt = document.getElementById('buscaGlobalDe'+suf).value;
+  const ateTxt = document.getElementById('buscaGlobalAte'+suf).value;
   const de = deTxt ? new Date(deTxt + 'T00:00:00') : null;
   const ate = ateTxt ? new Date(ateTxt + 'T23:59:59') : null;
-  const resultEl = document.getElementById('buscaGlobalResultado');
+  const resultEl = document.getElementById('buscaGlobalResultado'+suf);
   if(!termo && !de && !ate){ resultEl.innerHTML = ''; return; }
   resultEl.innerHTML = '<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Procurando em todas as conciliações salvas...</div>';
 
@@ -1686,12 +1700,18 @@ async function importarBackup(file){
 }
 
 document.getElementById('btnExportarBackup').addEventListener('click', exportarBackup);
-document.getElementById('btnBuscaGlobal').addEventListener('click', buscarGlobalTodasConciliacoes);
+document.getElementById('btnBuscaGlobal').addEventListener('click', () => buscarGlobalTodasConciliacoes());
 document.getElementById('buscaGlobalInput').addEventListener('keydown', (e) => {
   if(e.key === 'Enter') buscarGlobalTodasConciliacoes();
 });
-document.getElementById('buscaGlobalDe').addEventListener('change', buscarGlobalTodasConciliacoes);
-document.getElementById('buscaGlobalAte').addEventListener('change', buscarGlobalTodasConciliacoes);
+document.getElementById('buscaGlobalDe').addEventListener('change', () => buscarGlobalTodasConciliacoes());
+document.getElementById('buscaGlobalAte').addEventListener('change', () => buscarGlobalTodasConciliacoes());
+document.getElementById('btnBuscaGlobal2').addEventListener('click', () => buscarGlobalTodasConciliacoes('2'));
+document.getElementById('buscaGlobalInput2').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') buscarGlobalTodasConciliacoes('2');
+});
+document.getElementById('buscaGlobalDe2').addEventListener('change', () => buscarGlobalTodasConciliacoes('2'));
+document.getElementById('buscaGlobalAte2').addEventListener('change', () => buscarGlobalTodasConciliacoes('2'));
 document.getElementById('fileImportarBackup').addEventListener('change', (e)=>{
   const f = e.target.files[0];
   if(f) importarBackup(f);
