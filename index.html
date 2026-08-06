@@ -1310,23 +1310,32 @@ const STORAGE_NS = 'conciliador_conta_mae:';
 // originais (extrato/relatório/notas em base64) — isso permite reabrir e reajustar o período
 // de qualquer sessão. Só que, com o tempo, isso cresce demais e o Microsoft Graph passa a
 // recusar a gravação (erro 400/413 — "arquivo grande demais pra salvar de uma vez"). Pra evitar
-// isso, só as sessões mais recentes mantêm essa cópia completa; as mais antigas continuam
-// consultáveis (pela busca, pelas abas) mas perdem a cópia bruta — se precisar reajustar o
-// período de uma conciliação antiga, é só reanexar o arquivo original de novo.
-const MAX_SESSOES_COM_ARQUIVO_BRUTO = 6;
-function podarBytesBrutosDeSessoesAntigas(sessions, limite){
-  limite = limite || MAX_SESSOES_COM_ARQUIVO_BRUTO;
+// isso, medimos o tamanho real do arquivo e vamos limpando a cópia bruta das sessões mais
+// antigas (a partir da mais antiga) até caber com folga — não é uma contagem fixa, porque o
+// tamanho de cada sessão varia bastante (depende do tamanho dos arquivos originais). As sessões
+// continuam 100% consultáveis (busca, abas) mesmo sem a cópia bruta — só perdem a possibilidade
+// de reajustar o período sem reanexar o arquivo original de novo.
+const LIMITE_SEGURO_BYTES = 3 * 1024 * 1024; // 3 MB de folga, abaixo do limite de ~4MB do Graph
+function podarPorTamanho(sessions, limiteBytes){
+  limiteBytes = limiteBytes || LIMITE_SEGURO_BYTES;
   const chaves = Object.keys(sessions).filter(k => k.indexOf('conc:') === 0);
   const comData = chaves.map(k => ({ k, savedAt: sessions[k] && sessions[k].savedAt ? new Date(sessions[k].savedAt).getTime() : 0 }));
-  comData.sort((a,b) => b.savedAt - a.savedAt);
-  const antigas = comData.slice(limite);
-  antigas.forEach(({k}) => {
-    const s = sessions[k];
+  comData.sort((a,b) => b.savedAt - a.savedAt); // mais recente primeiro, mais antiga por último
+
+  let tamanhoAtual = JSON.stringify(sessions).length;
+  let i = comData.length - 1; // começa podando pela mais antiga
+  let podadas = 0;
+  while(tamanhoAtual > limiteBytes && i >= 0){
+    const s = sessions[comData[i].k];
     if(s && (s.ofxRawB64 || s.xlsxRawB64 || s.nfseRawB64 || s.ofxRawText)){
       s.ofxRawB64 = null; s.xlsxRawB64 = null; s.nfseRawB64 = null; s.ofxRawText = null;
-      s.arquivoOriginalRemovido = true; // sinaliza pra tela avisar, se precisar
+      s.arquivoOriginalRemovido = true;
+      tamanhoAtual = JSON.stringify(sessions).length;
+      podadas++;
     }
-  });
+    i--;
+  }
+  return { tamanhoFinal: tamanhoAtual, sessoesPodadas: podadas };
 }
 
 async function storageSet(key, value){
@@ -1334,13 +1343,13 @@ async function storageSet(key, value){
     try{
       if(!cloudDataCache) await cloudFetch();
       cloudDataCache.sessions[key] = value;
-      podarBytesBrutosDeSessoesAntigas(cloudDataCache.sessions);
+      podarPorTamanho(cloudDataCache.sessions);
       try{
         await cloudSave();
       }catch(e1){
-        // ainda grande demais mesmo depois da limpeza normal — tenta uma limpeza bem mais
-        // agressiva (só a sessão atual mantém o arquivo bruto) antes de desistir de vez.
-        podarBytesBrutosDeSessoesAntigas(cloudDataCache.sessions, 1);
+        // ainda grande demais mesmo depois da limpeza normal — aperta bem mais o limite
+        // (guardando bruto só da sessão mais recente) antes de desistir de vez.
+        podarPorTamanho(cloudDataCache.sessions, 800000);
         await cloudSave();
       }
       return true;
