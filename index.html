@@ -1838,7 +1838,10 @@ function cleanClientName(name, memo){
        .replace(/^REM\.:\s*/i,'')
        .replace(/^Devolu[cç][aã]o Pix\s*/i,'')
        .trim();
-  if(!n) n = memo || '';
+  // Importante: NÃO cai pro memo bruto quando não tem nome — isso fazia todo recebimento
+  // aparecer como "identificado" sozinho, mesmo sem nenhum nome de cliente de verdade,
+  // só porque o memo não estava vazio. Sem nome real, fica em branco mesmo — pra identificar
+  // de propósito (por nota fiscal ou manualmente), não por engano.
   return n;
 }
 function extractNF(memo, name){
@@ -2586,7 +2589,7 @@ function runReconciliation(opts){
   report.forEach(r => {
     if(r.resultado) return; // já resolvido pela restauração acima
     if(!r.idReport) return;
-    const candidatosPorId = debits.filter(d => !d.used && !d.estornado && d.idExtrato && String(d.idExtrato) === String(r.idReport));
+    const candidatosPorId = debits.filter(d => !d.used && !d.estornado && !isMesmaTitularidade(d.memo) && !isBankOperation(d.memo) && d.idExtrato && String(d.idExtrato) === String(r.idReport));
     if(candidatosPorId.length === 1){
       const d = candidatosPorId[0];
       const valorBate = r.valor !== null && Math.abs(Math.abs(d.amount) - r.valor) < 0.01;
@@ -2613,6 +2616,8 @@ function runReconciliation(opts){
     const cands = debits.filter(d => {
       if(d.date===null) return false;
       if(d.estornado) return false; // pagamento revertido por devolução — nunca foi efetivo
+      if(isMesmaTitularidade(d.memo)) return false; // transferência entre contas próprias, não é pagamento a fornecedor
+      if(isBankOperation(d.memo)) return false; // tarifa/IOF/aplicação — já identificado sozinho como o banco
       const amtMatch = Math.abs(Math.abs(d.amount) - r.valor) < 0.005;
       const dateMatch = Math.abs(daysBetween(d.date, r.pagoEm)) <= windowDays;
       return amtMatch && dateMatch;
@@ -2728,7 +2733,7 @@ function runReconciliation(opts){
       // Passo 1 — cruzamento pelo número da NF, quando o cliente cita ele no PIX/TED recebido
       reportReceber.forEach(n => {
         if(n.resultado) return; // já resolvido pela restauração acima
-        const candidatosPorNF = credits.filter(c => !c.used && c.nf && String(c.nf) === String(n.numeroNF));
+        const candidatosPorNF = credits.filter(c => !c.used && !isMesmaTitularidade(c.memo) && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && c.nf && String(c.nf) === String(n.numeroNF));
         if(candidatosPorNF.length === 1){
           const c = candidatosPorNF[0];
           n.matchedTx = c; c.used = true; n.resultado = 'ok'; n.matchedByNF = true;
@@ -2741,6 +2746,7 @@ function runReconciliation(opts){
       elegiveisReceber.forEach(n => {
         const cands = credits.filter(c => {
           if(c.used || !c.date) return false;
+          if(isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false; // movimento interno, não é receita de cliente
           const amtMatch = Math.abs(Math.abs(c.amount) - n.valorLiquido) < 0.01 || Math.abs(Math.abs(c.amount) - n.valorServico) < 0.01;
           const dateMatch = Math.abs(daysBetween(c.date, n.dataEmissao)) <= windowReceberDays;
           return amtMatch && dateMatch;
@@ -2810,7 +2816,8 @@ function renderSummary(){
   const totalCreditosPeriodo = credits.reduce((s,c)=> s + Math.abs(c.amount), 0);
   const totalResgates = credits.filter(c=>isResgateAplicacao(c.memo)).reduce((s,c)=> s + Math.abs(c.amount), 0);
   const totalDevolucoes = credits.filter(c=>c.isDevolucao).reduce((s,c)=> s + Math.abs(c.amount), 0);
-  const totalCreditosEfetivos = totalCreditosPeriodo - totalResgates - totalDevolucoes;
+  const totalMesmaTitCredito = credits.filter(c=>isMesmaTitularidade(c.memo)).reduce((s,c)=> s + Math.abs(c.amount), 0);
+  const totalCreditosEfetivos = totalCreditosPeriodo - totalResgates - totalDevolucoes - totalMesmaTitCredito;
 
   document.getElementById('summaryCards').innerHTML = `
     <div class="card">
@@ -2835,7 +2842,7 @@ function renderSummary(){
     </div>
     <div class="card ok">
       <div class="num">${fmtMoney(totalCreditosEfetivos)}</div>
-      <div class="lbl">Recebimentos efetivos no período (sem resgates/devoluções)${(totalResgates+totalDevolucoes)>0 ? '<br><span style="font-weight:400;font-size:10.5px;">bruto: R$ '+fmtMoney(totalCreditosPeriodo)+'</span>' : ''}</div>
+      <div class="lbl">Recebimentos efetivos no período (sem resgates/devoluções/transferências internas)${(totalResgates+totalDevolucoes+totalMesmaTitCredito)>0 ? '<br><span style="font-weight:400;font-size:10.5px;">bruto: R$ '+fmtMoney(totalCreditosPeriodo)+'</span>' : ''}</div>
     </div>
     <div class="card">
       <div class="num">${total}</div>
@@ -2856,16 +2863,17 @@ function renderSummary(){
 
   renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo);
   renderLegend();
-  renderFechamento(warn, bad, debitosPendentesId, totalDebitosPeriodo, totalCreditosPeriodo);
+  renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo);
 }
 
-function renderFechamento(warn, bad, debitosPendentesId, totalDebitosPeriodo, totalCreditosPeriodo){
+function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo){
   const panel = document.getElementById('fechamentoPanel');
   if(!panel) return;
   const pendencias = [];
   if(warn > 0) pendencias.push(`${warn} linha(s) do relatório com sugestão ainda não confirmada`);
   if(bad > 0) pendencias.push(`${bad} linha(s) do relatório sem correspondência no extrato`);
   if(debitosPendentesId > 0) pendencias.push(`${debitosPendentesId} pagamento(s) do extrato ainda sem fornecedor identificado`);
+  if(creditosACompletar > 0) pendencias.push(`${creditosACompletar} recebimento(s) do extrato ainda sem cliente identificado`);
 
   let saldoOk = false;
   if(saldoInicialInformado !== null && !isNaN(saldoInicialInformado) && ofxMeta.saldoFinal !== null){
