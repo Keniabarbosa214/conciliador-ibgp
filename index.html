@@ -3924,6 +3924,11 @@ function atualizarDropzonesComArquivosAtuais(){
 function voltarParaUpload(){
   currentSessionKey = null;
   fileOfxInput.value=''; fileXlsxInput.value='';
+  // Limpa o período que ficou configurado da conciliação anterior — senão, ao trocar de
+  // arquivo pra um mês novo, o sistema tentava filtrar o extrato novo com a data antiga e
+  // não achava nada ("Nenhum lançamento cai dentro do período selecionado").
+  document.getElementById('cfgPeriodoDe').value = '';
+  document.getElementById('cfgPeriodoAte').value = '';
   atualizarDropzonesComArquivosAtuais();
   checkReady();
   document.getElementById('resultsStage').classList.remove('show');
