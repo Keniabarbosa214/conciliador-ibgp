@@ -1113,6 +1113,19 @@ const MSAL_CONFIG = {
   },
   cache: { cacheLocation: 'localStorage' }
 };
+// Lista de e-mails autorizados a usar o login Microsoft / modo compartilhado.
+// Qualquer conta da organização que NÃO esteja nesta lista é deslogada automaticamente.
+const ALLOWED_EMAILS = [
+  'financeirogrupoibgp@ibgp.org.br',
+  'kenia.barbosa@ibgp.org.br',
+  'josiane.monte@ibgp.org.br',
+  'luciana.cossich@ibgp.org.br'
+];
+function emailPermitido(conta){
+  if(!conta || !conta.username) return false;
+  return ALLOWED_EMAILS.includes(conta.username.toLowerCase());
+}
+
 let msalInstance = null;
 let msalAccount = null;
 let modoCompartilhado = false;
@@ -1282,6 +1295,19 @@ document.getElementById('btnConectarCloud').addEventListener('click', async ()=>
     } else {
       const contas = app.getAllAccounts();
       if(contas.length > 0) msalAccount = contas[0];
+    }
+    if(msalAccount && !emailPermitido(msalAccount)){
+      // Conta é da organização (passou pelo Azure AD), mas não está na lista de e-mails autorizados.
+      const emailNegado = msalAccount.username;
+      try{ await app.logoutRedirect({ account: msalAccount, postLogoutRedirectUri: window.location.origin + window.location.pathname }); }
+      catch(e){ console.warn('Falha ao deslogar conta não autorizada:', e); }
+      msalAccount = null;
+      localStorage.removeItem('conciliador_pediu_login');
+      localStorage.removeItem(CLOUD_LINK_KEY);
+      alert('O e-mail ' + emailNegado + ' não tem permissão para usar esta ferramenta. Fale com o financeiro do IBGP se acha que isso é um erro.');
+      atualizarPainelNuvem();
+      refreshSavedSessionsList();
+      return;
     }
     if(msalAccount){
       const linkSalvo = localStorage.getItem(CLOUD_LINK_KEY);
