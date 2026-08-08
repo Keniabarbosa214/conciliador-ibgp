@@ -443,6 +443,8 @@
 
 <main>
 
+  <div id="avisoSincronizacaoPendente" style="display:none;background:#A23C3C;color:#fff;padding:10px 16px;font-weight:700;font-size:13px;text-align:center;position:sticky;top:0;z-index:200;"></div>
+
   <!-- STAGE 1: UPLOAD -->
   <section id="uploadStage" class="show">
     <div class="cloud-panel" id="cloudPanel">
@@ -1113,19 +1115,6 @@ const MSAL_CONFIG = {
   },
   cache: { cacheLocation: 'localStorage' }
 };
-// Lista de e-mails autorizados a usar o login Microsoft / modo compartilhado.
-// Qualquer conta da organização que NÃO esteja nesta lista é deslogada automaticamente.
-const ALLOWED_EMAILS = [
-  'financeirogrupoibgp@ibgp.org.br',
-  'kenia.barbosa@ibgp.org.br',
-  'josiane.monte@ibgp.org.br',
-  'luciana.cossich@ibgp.org.br'
-];
-function emailPermitido(conta){
-  if(!conta || !conta.username) return false;
-  return ALLOWED_EMAILS.includes(conta.username.toLowerCase());
-}
-
 let msalInstance = null;
 let msalAccount = null;
 let modoCompartilhado = false;
@@ -1296,19 +1285,6 @@ document.getElementById('btnConectarCloud').addEventListener('click', async ()=>
       const contas = app.getAllAccounts();
       if(contas.length > 0) msalAccount = contas[0];
     }
-    if(msalAccount && !emailPermitido(msalAccount)){
-      // Conta é da organização (passou pelo Azure AD), mas não está na lista de e-mails autorizados.
-      const emailNegado = msalAccount.username;
-      try{ await app.logoutRedirect({ account: msalAccount, postLogoutRedirectUri: window.location.origin + window.location.pathname }); }
-      catch(e){ console.warn('Falha ao deslogar conta não autorizada:', e); }
-      msalAccount = null;
-      localStorage.removeItem('conciliador_pediu_login');
-      localStorage.removeItem(CLOUD_LINK_KEY);
-      alert('O e-mail ' + emailNegado + ' não tem permissão para usar esta ferramenta. Fale com o financeiro do IBGP se acha que isso é um erro.');
-      atualizarPainelNuvem();
-      refreshSavedSessionsList();
-      return;
-    }
     if(msalAccount){
       const linkSalvo = localStorage.getItem(CLOUD_LINK_KEY);
       if(linkSalvo){
@@ -1366,6 +1342,8 @@ function podarPorTamanho(sessions, limiteBytes){
 
 async function storageSet(key, value){
   if(modoCompartilhado){
+    let falhouNaNuvem = false;
+    let mensagemErro = '';
     try{
       if(!cloudDataCache) await cloudFetch();
       cloudDataCache.sessions[key] = value;
@@ -1378,8 +1356,26 @@ async function storageSet(key, value){
         podarPorTamanho(cloudDataCache.sessions, 800000);
         await cloudSave();
       }
+    }catch(e){
+      falhouNaNuvem = true;
+      mensagemErro = e.message;
+    }
+    // Rede de segurança: MESMO em modo compartilhado, sempre grava também uma cópia local
+    // nesse navegador. Se a nuvem falhar (arquivo grande, sem internet, permissão expirada),
+    // o trabalho não fica só na memória — continua recuperável neste computador, e um aviso
+    // fixo (não um alerta que se ignora e esquece) avisa que a sincronização está pendente.
+    try{ localStorage.setItem(STORAGE_NS+key, JSON.stringify(value)); }catch(e){ /* ignora se não couber */ }
+    const avisoEl = document.getElementById('avisoSincronizacaoPendente');
+    if(falhouNaNuvem){
+      if(avisoEl){
+        avisoEl.style.display = 'block';
+        avisoEl.textContent = '⚠️ Não consegui salvar na nuvem agora (' + mensagemErro + ') — seu trabalho foi guardado neste navegador como segurança, mas ainda NÃO está sincronizado com quem mais usa o sistema. Exporte um backup e avise o suporte se isso continuar.';
+      }
+      return false;
+    } else {
+      if(avisoEl) avisoEl.style.display = 'none';
       return true;
-    }catch(e){ alert(e.message + '\n\nSe o erro persistir, pode ser que o arquivo compartilhado no OneDrive esteja muito grande — me avise pra investigarmos juntos.'); return false; }
+    }
   }
   try{
     if(window.storage && typeof window.storage.set === 'function'){
@@ -1394,8 +1390,16 @@ async function storageGet(key){
   if(modoCompartilhado){
     try{
       if(!cloudDataCache) await cloudFetch();
-      return cloudDataCache.sessions[key] || null;
-    }catch(e){ alert(e.message); return null; }
+      if(cloudDataCache.sessions[key]) return cloudDataCache.sessions[key];
+    }catch(e){ /* nuvem indisponível — cai pro fallback local abaixo, sem perder a chance de achar */ }
+    // Não achou na nuvem (ou nem conseguiu consultar) — confere se existe uma cópia local dessa
+    // sessão específica, guardada como rede de segurança de uma vez que o salvamento na nuvem
+    // tenha falhado antes. Sem isso, um trabalho salvo só localmente pareceria "não existir".
+    try{
+      const raw = localStorage.getItem(STORAGE_NS+key);
+      if(raw) return JSON.parse(raw);
+    }catch(e){}
+    return null;
   }
   try{
     if(window.storage && typeof window.storage.get === 'function'){
@@ -4226,6 +4230,10 @@ document.getElementById('btnTrocarArquivos').addEventListener('click', () => {
 });
 
 btnRun.addEventListener('click', async ()=>{
+  if(ofxFilename && xlsxFilename && ofxFilename === xlsxFilename){
+    alert('⚠️ Você escolheu o MESMO arquivo ("' + ofxFilename + '") tanto na caixinha 01 (Extrato) quanto na 02 (Relatório de cobranças).\n\nIsso quase sempre é um engano — confira e escolha o arquivo certo em cada caixinha antes de continuar.');
+    return;
+  }
   const prospectiveKey = buildSessionKey();
   const existing = await storageGet(prospectiveKey);
   if(existing){
