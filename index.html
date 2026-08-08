@@ -483,6 +483,9 @@
     <div class="busca-global-bar" style="background:#EFE6D8;">
       <span class="busca-global-label">📅 Fechamento mensal — junta todas as conciliações diárias salvas do mês escolhido</span>
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+        <select id="fechamentoConta" style="padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;min-width:180px;">
+          <option value="">Todas as contas</option>
+        </select>
         <select id="fechamentoMes" style="padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
           <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
           <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
@@ -492,7 +495,19 @@
         <input type="number" id="fechamentoAno" value="2026" min="2020" max="2099" style="width:80px;padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
         <button id="btnGerarFechamentoMensal" class="btn-aplicar-periodo">Gerar fechamento do mês</button>
       </div>
+      <div style="font-size:11px;color:var(--ink-soft);margin-top:4px;">⚠️ Escolha uma conta específica pra fechar corretamente o saldo bancário — "Todas as contas" soma tudo junto, útil só pra visão geral, não pra provar saldo de uma conta específica.</div>
       <div id="fechamentoMensalResultado"></div>
+    </div>
+
+    <div class="busca-global-bar" style="background:#E4EFE6;">
+      <span class="busca-global-label">🏦 Contas bancárias cadastradas</span>
+      <div id="listaContasCadastradas" style="margin-top:8px;"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="novaContaAgencia" placeholder="Agência (ex: 4092-4)" style="width:130px;padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <input type="text" id="novaContaNumero" placeholder="Conta (ex: 6469-6)" style="width:130px;padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <input type="text" id="novaContaApelido" placeholder="Apelido (ex: Sicoob — Conta Mãe)" style="flex:1;min-width:180px;padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <button id="btnCadastrarConta" class="btn-aplicar-periodo">+ Cadastrar conta</button>
+      </div>
     </div>
 
     <div id="savedSessions" class="saved-sessions"></div>
@@ -1093,6 +1108,94 @@ let projetosHistorico = []; // acumula TODO projeto já visto em qualquer relat�
                              // salvo entre sessões — assim a busca nunca fica vazia, sem precisar
                              // de planilha nenhuma pra manter (diferente do centro de custo, que é
                              // uma lista fixa da empresa, projeto muda de contrato pra contrato).
+
+// Suporte a múltiplas contas bancárias: o número da conta/agência já vem sozinho do próprio
+// arquivo do extrato (ninguém precisa digitar isso). O que a pessoa escolhe é só um APELIDO
+// fácil de reconhecer (ex: "Sicoob — Conta Mãe") pra cada número de conta — e o sistema lembra
+// esse apelido da próxima vez que aparecer o mesmo número, sem precisar digitar de novo.
+let contasConhecidas = {}; // { "agencia|conta": "Apelido escolhido" }
+let contaAtualKey = '';    // "agencia|conta" em uso nesta conciliação
+let contaAtualLabel = '';  // apelido em uso nesta conciliação
+
+// Este sistema nasceu conciliando uma única conta (Sicoob, Ag. 4092-4, Conta 6469-6 — a
+// "Conta Mãe"), que continua sendo a conta PADRÃO/protegida (sempre pré-cadastrada e
+// pré-selecionada, pra nunca sair do ar mesmo num sistema novo). Mas agora dá pra cadastrar e
+// selecionar outras contas também, quando precisar conciliar uma conta diferente.
+const CONTA_FIXA_AGENCIA = '4092-4';
+const CONTA_FIXA_NUMERO = '6469-6';
+const CONTA_FIXA_LABEL = 'Sicoob — Conta Mãe';
+const CONTA_FIXA_KEY = CONTA_FIXA_AGENCIA + '|' + CONTA_FIXA_NUMERO;
+
+function contaKeyDe(branchId, acctId){
+  return (branchId||'') + '|' + (acctId||'');
+}
+
+async function carregarContasConhecidas(){
+  const salvo = await storageGet('contas-bancarias-conhecidas');
+  contasConhecidas = (salvo && typeof salvo === 'object') ? salvo : {};
+  if(!contasConhecidas[CONTA_FIXA_KEY]){
+    contasConhecidas[CONTA_FIXA_KEY] = CONTA_FIXA_LABEL;
+    try{ await storageSet('contas-bancarias-conhecidas', contasConhecidas); }catch(e){ /* silencioso */ }
+  }
+}
+async function salvarContaConhecida(key, label){
+  if(!key || !label) return;
+  if(contasConhecidas[key] === label) return; // nada novo
+  contasConhecidas[key] = label;
+  try{ await storageSet('contas-bancarias-conhecidas', contasConhecidas); }catch(e){ /* silencioso */ }
+  atualizarSeletorContasFechamento();
+  renderListaContasCadastradas();
+}
+
+function atualizarSeletorContasFechamento(){
+  const sel = document.getElementById('fechamentoConta');
+  if(!sel) return;
+  const valorAtual = sel.value;
+  const opcoes = Object.entries(contasConhecidas).map(([key,label]) => `<option value="${key}">${label}</option>`).join('');
+  sel.innerHTML = '<option value="">Todas as contas</option>' + opcoes;
+  if([...sel.options].some(o=>o.value===valorAtual)) sel.value = valorAtual;
+}
+
+// Lista as contas já cadastradas (com botão de excluir) na tela inicial.
+function renderListaContasCadastradas(){
+  const el = document.getElementById('listaContasCadastradas');
+  if(!el) return;
+  const entradas = Object.entries(contasConhecidas);
+  if(entradas.length === 0){
+    el.innerHTML = '<div style="font-size:12px;color:var(--ink-soft);">Nenhuma conta cadastrada ainda.</div>';
+    return;
+  }
+  el.innerHTML = entradas.map(([key,label]) => {
+    const [ag, conta] = key.split('|');
+    const ehPadrao = key === CONTA_FIXA_KEY;
+    return `<div class="busca-global-item">
+      <div><b>${label}</b>${ehPadrao ? ' <span class="badge-id">padrão</span>' : ''}<br><span class="meta">Ag. ${ag||'—'} · Conta ${conta||'—'}</span></div>
+      ${ehPadrao ? '' : `<button class="btn-delete" onclick="excluirContaCadastrada('${key.replace(/'/g,"\\'")}')">Excluir</button>`}
+    </div>`;
+  }).join('');
+}
+
+async function cadastrarContaManual(){
+  const ag = document.getElementById('novaContaAgencia').value.trim();
+  const conta = document.getElementById('novaContaNumero').value.trim();
+  const apelido = document.getElementById('novaContaApelido').value.trim();
+  if(!conta || !apelido){ alert('Preencha pelo menos a Conta e o Apelido.'); return; }
+  const key = contaKeyDe(ag, conta);
+  await salvarContaConhecida(key, apelido);
+  document.getElementById('novaContaAgencia').value = '';
+  document.getElementById('novaContaNumero').value = '';
+  document.getElementById('novaContaApelido').value = '';
+}
+async function excluirContaCadastrada(key){
+  if(key === CONTA_FIXA_KEY){ alert('Essa é a conta padrão do sistema e não pode ser excluída.'); return; }
+  if(!confirm('Excluir essa conta cadastrada? Isso não afeta conciliações já salvas, só some da lista de seleção.')) return;
+  delete contasConhecidas[key];
+  try{ await storageSet('contas-bancarias-conhecidas', contasConhecidas); }catch(e){}
+  renderListaContasCadastradas();
+  atualizarSeletorContasFechamento();
+}
+window.excluirContaCadastrada = excluirContaCadastrada;
+
 let debits = [];          // parsed bank DEBIT transactions
 let credits = [];         // parsed bank CREDIT transactions (kept for reference)
 let report = [];          // parsed report rows
@@ -1474,7 +1577,8 @@ function slugify(s){
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 function buildSessionKey(){
-  return 'conc:' + slugify(ofxFilename) + '__' + slugify(xlsxFilename);
+  const contaParaChave = contaAtualKey || CONTA_FIXA_KEY;
+  return 'conc:' + slugify(contaParaChave) + '__' + slugify(ofxFilename) + '__' + slugify(xlsxFilename);
 }
 
 function uint8ToBase64(bytes){
@@ -1495,6 +1599,7 @@ function base64ToUint8(b64){
 function serializeSession(){
   return {
     ofxFilename, xlsxFilename, ofxFormat,
+    contaLabel: contaAtualLabel, contaKey: contaAtualKey,
     nfseFilename, nfseRawB64: nfseRaw ? uint8ToBase64(nfseRaw) : null,
     ofxRawB64: (ofxFormat === 'xls' && ofxRaw) ? uint8ToBase64(ofxRaw) : null,
     ofxRawText: (ofxFormat === 'ofx') ? ofxRaw : null,
@@ -1538,6 +1643,8 @@ function serializeSession(){
 function deserializeSession(snap){
   ofxFilename = snap.ofxFilename; xlsxFilename = snap.xlsxFilename;
   ofxFormat = snap.ofxFormat || 'ofx';
+  contaAtualLabel = snap.contaLabel || '';
+  contaAtualKey = snap.contaKey || '';
   nfseFilename = snap.nfseFilename || '';
   nfseRaw = snap.nfseRawB64 ? base64ToUint8(snap.nfseRawB64) : null;
   ofxRaw = ofxFormat === 'xls'
@@ -1623,7 +1730,7 @@ async function buscarGlobalTodasConciliacoes(suf){
   for(const key of keys){
     const snap = await storageGet(key);
     if(!snap) continue;
-    const nomeSessao = `${snap.ofxFilename||'?'} × ${snap.xlsxFilename||'?'}`;
+    const nomeSessao = `${snap.contaLabel ? '🏦 '+snap.contaLabel+' — ' : ''}${snap.ofxFilename||'?'} × ${snap.xlsxFilename||'?'}`;
     const savedAtTxt = snap.savedAt ? new Date(snap.savedAt).toLocaleString('pt-BR') : '';
 
     (snap.report||[]).forEach(r => {
@@ -1701,6 +1808,7 @@ window.abrirSessaoDaBuscaGlobal = abrirSessaoDaBuscaGlobal;
 async function gerarFechamentoMensal(){
   const mes = parseInt(document.getElementById('fechamentoMes').value, 10);
   const ano = parseInt(document.getElementById('fechamentoAno').value, 10);
+  const contaFiltro = document.getElementById('fechamentoConta').value; // '' = todas as contas
   const resultEl = document.getElementById('fechamentoMensalResultado');
   resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Juntando todas as conciliações salvas de ${MESES_NOMES[mes]}/${ano}...</div>`;
 
@@ -1722,6 +1830,7 @@ async function gerarFechamentoMensal(){
   for(const key of keys){
     const snap = await storageGet(key);
     if(!snap) continue;
+    if(contaFiltro && (snap.contaKey||'') !== contaFiltro) continue; // pula sessões de outras contas
     let usouEssaSessao = false;
     (snap.debits||[]).forEach(d => { if(dentroDoMes(d.date)){ debitosMes.set(d.fitid, d); usouEssaSessao = true; } });
     (snap.credits||[]).forEach(c => { if(dentroDoMes(c.date)){ creditosMes.set(c.fitid, c); usouEssaSessao = true; } });
@@ -1760,11 +1869,12 @@ async function gerarFechamentoMensal(){
   const reportPendente = reportArr.length - reportOk;
   const totalPendencias = debitosPendentes + creditosPendentes + reportPendente;
 
-  fechamentoMensalCache = { mes, ano, debitosArr, creditosArr, reportArr, notasArr };
+  const contaLabelUsada = contaFiltro ? (contasConhecidas[contaFiltro] || contaFiltro) : 'Todas as contas';
+  fechamentoMensalCache = { mes, ano, debitosArr, creditosArr, reportArr, notasArr, contaLabelUsada };
 
   resultEl.innerHTML = `
     <div style="margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px;">
-      <div style="font-weight:700;color:var(--navy);margin-bottom:10px;">${MESES_NOMES[mes]} / ${ano} — ${debitosArr.length + creditosArr.length} lançamentos do extrato, juntados de ${sessoesUsadas} conciliação(ões) diária(s) salva(s)</div>
+      <div style="font-weight:700;color:var(--navy);margin-bottom:10px;">🏦 ${contaLabelUsada} — ${MESES_NOMES[mes]} / ${ano} — ${debitosArr.length + creditosArr.length} lançamentos do extrato, juntados de ${sessoesUsadas} conciliação(ões) diária(s) salva(s)</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:10px;">
         <div><b style="font-size:16px;">${fmtMoney(totalDebitos)}</b><br><span style="font-size:11px;color:var(--ink-soft);">Total de saídas</span></div>
         <div><b style="font-size:16px;">${fmtMoney(totalCreditos)}</b><br><span style="font-size:11px;color:var(--ink-soft);">Total de entradas</span></div>
@@ -1782,7 +1892,7 @@ async function gerarFechamentoMensal(){
 
 function exportarFechamentoMensal(){
   if(!fechamentoMensalCache){ alert('Gere o fechamento do mês primeiro.'); return; }
-  const { mes, ano, debitosArr, creditosArr, reportArr, notasArr } = fechamentoMensalCache;
+  const { mes, ano, debitosArr, creditosArr, reportArr, notasArr, contaLabelUsada } = fechamentoMensalCache;
   const linhas = [];
 
   debitosArr.forEach(d => {
@@ -1851,7 +1961,7 @@ function exportarFechamentoMensal(){
     XLSX.utils.book_append_sheet(wbOut, wsNotas, 'Notas Fiscais Pendentes');
   }
 
-  XLSX.writeFile(wbOut, `fechamento_${MESES_NOMES[mes].toLowerCase()}_${ano}.xlsx`);
+  XLSX.writeFile(wbOut, `fechamento_${slugify(contaLabelUsada)}_${MESES_NOMES[mes].toLowerCase()}_${ano}.xlsx`);
 }
 window.exportarFechamentoMensal = exportarFechamentoMensal;
 
@@ -1870,6 +1980,7 @@ async function refreshSavedSessionsList(){
   listEl.innerHTML = `<h4>Conciliações salvas</h4>` + items.map(it => `
     <div class="saved-item">
       <div>
+        ${it.snap.contaLabel ? `<span class="badge-id" style="margin-bottom:3px;display:inline-block;">🏦 ${it.snap.contaLabel}</span><br>` : ''}
         <b>${it.snap.ofxFilename}</b> × <b>${it.snap.xlsxFilename}</b><br>
         <span class="meta">salvo em ${new Date(it.snap.savedAt).toLocaleString('pt-BR')} · ${it.snap.report.length} linhas</span>
       </div>
@@ -3172,10 +3283,29 @@ function renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo){
     }
   }
 
+  // Conta padrão pré-selecionada — mas agora com seletor real, pra trocar quando for
+  // conciliar uma conta diferente. Se o arquivo permite detectar a conta (OFX) e ela já
+  // estiver cadastrada, usa a detectada; senão, mantém a última selecionada ou a padrão.
+  const contaDetectadaKey = ofxMeta.acctId ? contaKeyDe(ofxMeta.branchId, ofxMeta.acctId) : '';
+  if(contaDetectadaKey && contasConhecidas[contaDetectadaKey]){
+    contaAtualKey = contaDetectadaKey;
+  } else if(!contaAtualKey || !contasConhecidas[contaAtualKey]){
+    contaAtualKey = CONTA_FIXA_KEY;
+  }
+  contaAtualLabel = contasConhecidas[contaAtualKey] || CONTA_FIXA_LABEL;
+  const opcoesContaSel = Object.entries(contasConhecidas).map(([key,label]) =>
+    `<option value="${key}" ${key===contaAtualKey?'selected':''}>${label}</option>`
+  ).join('');
+  const avisoContaDiferente = (contaDetectadaKey && contaDetectadaKey !== contaAtualKey && !contasConhecidas[contaDetectadaKey])
+    ? `<div style="font-size:10.5px;color:var(--bad);margin-top:3px;">⚠️ O extrato parece ser da conta ${ofxMeta.acctId} (Ag. ${ofxMeta.branchId}), não cadastrada. Confira se é a conta certa!</div>` : '';
+
   panel.innerHTML = `
     <div class="bloco">
-      <div class="v">${ofxMeta.acctId || '—'}</div>
-      <div class="l">Conta${ofxMeta.branchId ? ' (Ag. '+ofxMeta.branchId+')' : ''}</div>
+      <select id="contaBancariaSelect" style="width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:12px;font-weight:700;">
+        ${opcoesContaSel}
+      </select>
+      <div class="l" style="margin-top:3px;">Conta bancária desta conciliação</div>
+      ${avisoContaDiferente}
     </div>
     <div class="bloco">
       <div class="v">${periodoTxt}</div>
@@ -3193,8 +3323,17 @@ function renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo){
   `;
 
   const headerTag = document.getElementById('headerTag');
-  if(headerTag && ofxMeta.acctId){
-    headerTag.textContent = `Conta ${ofxMeta.acctId} · extrato × relatório de cobranças`;
+  const atualizarHeaderTag = () => { if(headerTag) headerTag.textContent = `${contaAtualLabel} · extrato × relatório de cobranças`; };
+  atualizarHeaderTag();
+
+  const selConta = document.getElementById('contaBancariaSelect');
+  if(selConta){
+    selConta.addEventListener('change', (e) => {
+      contaAtualKey = e.target.value;
+      contaAtualLabel = contasConhecidas[contaAtualKey] || '';
+      atualizarHeaderTag();
+      persistCurrentSession();
+    });
   }
 
   const inp = document.getElementById('saldoInicialInput');
@@ -4283,6 +4422,11 @@ document.querySelectorAll('.btn-periodo-seta').forEach(btn => {
 /* ============================= INIT ============================= */
 refreshSavedSessionsList();
 carregarProjetosHistorico();
+carregarContasConhecidas().then(() => {
+  atualizarSeletorContasFechamento();
+  renderListaContasCadastradas();
+});
+document.getElementById('btnCadastrarConta').addEventListener('click', cadastrarContaManual);
 </script>
 </body>
 </html>
