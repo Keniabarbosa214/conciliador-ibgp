@@ -2383,6 +2383,27 @@ function extractPaymentId(text){
   return m ? m[1] : null;
 }
 
+// Gera um identificador (fitid) ESTÁVEL pra cada lançamento do extrato XLS, baseado no
+// conteúdo (data + valor + documento + memo) — não na posição dele dentro do arquivo. Isso é
+// importante: se o banco muda a ordem dos lançamentos entre duas exportações do mesmo período
+// (acontece), um fitid baseado em posição mudaria e o sistema perderia a ligação com o que já
+// foi confirmado antes, mesmo sendo o mesmo pagamento. Usa um contador só pra desempatar
+// duplicatas genuínas (dois lançamentos idênticos no mesmo dia).
+function gerarFitidEstavel(prefixo, dataStr, num, fullMemo, documento, contadorMap){
+  const chaveBase = prefixo + '|' + dataStr + '|' + Math.round(num*100) + '|' + (documento||'') + '|' + slugify(fullMemo).slice(0,60);
+  const ocorrencia = (contadorMap.get(chaveBase) || 0) + 1;
+  contadorMap.set(chaveBase, ocorrencia);
+  return chaveBase.replace(/[^a-z0-9|]/gi,'') + '-' + ocorrencia;
+}
+
+// Chave baseada só no conteúdo (data + valor + memo) — serve de PONTE de compatibilidade: uma
+// sessão salva com o fitid ANTIGO (por posição no arquivo) ainda é reconhecida ao reprocessar,
+// porque essa chave não depende do formato do fitid, só do conteúdo real do lançamento.
+function chaveConteudoTx(dateObj, amount, memo){
+  const dataStr = dateObj ? new Date(dateObj).toISOString().slice(0,10) : '';
+  return dataStr + '|' + Math.round(amount*100) + '|' + slugify(memo||'').slice(0,60);
+}
+
 function parseOFX(text){
   const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/g) || [];
   const get = (block, tag) => {
@@ -2437,6 +2458,7 @@ function parseXLSExtratoFormatoNovo(rows){
   let saldoAnterior = null;
   let idx = 0;
   let modoFuturo = false;
+  const contadorFitid = new Map();
   for(let i=0; i<rows.length; i++){
     const row = rows[i];
     const data = (row[0]||'').toString().trim();
@@ -2480,7 +2502,7 @@ function parseXLSExtratoFormatoNovo(rows){
       idx, date,
       amount: num,
       trntype: num < 0 ? 'DEBIT' : 'CREDIT',
-      fitid: 'xlsn-' + data.replace(/\//g,'') + '-' + idx,
+      fitid: gerarFitidEstavel('xlsn', data, num, fullMemo, documento, contadorFitid),
       checknum: documento, refnum: documento,
       memo: fullMemo, name: '',
       idExtrato: extractPaymentId(fullMemo),
@@ -2499,6 +2521,7 @@ function parseXLSExtratoFormatoAntigo(rows){
   let i = 0;
   let idx = 0;
   let modoFuturo = false;
+  const contadorFitid = new Map();
   while(i < rows.length){
     const row = rows[i];
     const data = (row[0]||'').toString().trim();
@@ -2563,11 +2586,12 @@ function parseXLSExtratoFormatoAntigo(rows){
     const numStr = valorRaw.replace(/[CD]\s*$/i,'').replace(/\u00a0/g,' ').trim();
     const num = parseValorBR(numStr);
     if(date && num !== null && suffix){
+      const amountSigned = suffix === 'D' ? -Math.abs(num) : Math.abs(num);
       out.push({
         idx, date,
-        amount: suffix === 'D' ? -Math.abs(num) : Math.abs(num),
+        amount: amountSigned,
         trntype: suffix === 'D' ? 'DEBIT' : 'CREDIT',
-        fitid: 'xls-' + data.replace(/\//g,'') + '-' + idx,
+        fitid: gerarFitidEstavel('xls', data, amountSigned, fullMemo, documento, contadorFitid),
         checknum: documento, refnum: documento,
         memo: fullMemo, name: '',
         idExtrato: extractPaymentId(fullMemo),
@@ -2719,11 +2743,19 @@ function runReconciliation(opts){
   const prevReportByID = {};
   const prevDebitsByFitid = {};
   const prevCreditsByFitid = {};
+  const prevDebitsByConteudo = {};
+  const prevCreditsByConteudo = {};
   const prevReceberByNumeroNF = {};
   if(preservar){
     report.forEach(r => { if(r.idReport) prevReportByID[String(r.idReport)] = r; });
-    debits.forEach(d => { prevDebitsByFitid[d.fitid] = d; });
-    credits.forEach(c => { prevCreditsByFitid[c.fitid] = c; });
+    debits.forEach(d => {
+      prevDebitsByFitid[d.fitid] = d;
+      prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)] = d;
+    });
+    credits.forEach(c => {
+      prevCreditsByFitid[c.fitid] = c;
+      prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)] = c;
+    });
     reportReceber.forEach(n => { if(n.numeroNF) prevReceberByNumeroNF[String(n.numeroNF)] = n; });
   }
 
@@ -2787,22 +2819,28 @@ function runReconciliation(opts){
     d.observacoes = d.observacoes || '';
   });
 
-  // Restaura o que já tinha sido identificado/classificado manualmente antes deste reprocessamento
+  // Restaura o que já tinha sido identificado/classificado manualmente antes deste reprocessamento.
+  // Tenta primeiro pelo fitid (mais preciso); se não achar (ex: sessão salva antes da troca do
+  // jeito de gerar o fitid), tenta pela ponte de conteúdo — assim nada se perde na transição.
   if(preservar){
     debits.forEach(d => {
-      const prev = prevDebitsByFitid[d.fitid];
+      const prev = prevDebitsByFitid[d.fitid] || prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
       if(prev){
         d.fornecedor = prev.fornecedor;
         d.centroCusto = prev.centroCusto;
         d.identStatus = prev.identStatus;
+        d.projeto = prev.projeto;
+        d.observacoes = prev.observacoes;
       }
     });
     credits.forEach(c => {
-      const prev = prevCreditsByFitid[c.fitid];
+      const prev = prevCreditsByFitid[c.fitid] || prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)];
       if(prev){
         c.cliente = prev.cliente;
         c.nf = prev.nf;
         c.centroCusto = prev.centroCusto;
+        c.projeto = prev.projeto;
+        c.observacoes = prev.observacoes;
       }
     });
   }
@@ -2928,7 +2966,12 @@ function runReconciliation(opts){
       if(!prev || !r.idReport) return;
       if(prev.favorecido !== undefined) r.favorecido = prev.favorecido;
       if(prev.resultado === 'ok' && prev.matchedTx){
-        const d = debits.find(x => x.fitid === prev.matchedTx.fitid && !x.used);
+        let d = debits.find(x => x.fitid === prev.matchedTx.fitid && !x.used);
+        if(!d){
+          // fitid antigo não bate (sessão de antes da troca do formato) — tenta pela ponte de conteúdo
+          const chaveAntiga = chaveConteudoTx(prev.matchedTx.date, prev.matchedTx.amount, prev.matchedTx.memo);
+          d = debits.find(x => !x.used && chaveConteudoTx(x.date, x.amount, x.memo) === chaveAntiga);
+        }
         if(d){
           r.matchedTx = d;
           d.used = true;
@@ -2945,7 +2988,7 @@ function runReconciliation(opts){
       }
     });
     debits.forEach(d => {
-      const prev = prevDebitsByFitid[d.fitid];
+      const prev = prevDebitsByFitid[d.fitid] || prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
       if(prev && prev.identStatus === 'manual') d.identStatus = 'manual';
     });
   }
@@ -3085,7 +3128,11 @@ function runReconciliation(opts){
           const prev = prevReceberByNumeroNF[String(n.numeroNF)];
           if(!prev || !prev.resultado) return;
           if(prev.resultado === 'ok' && prev.matchedTx){
-            const c = credits.find(x => x.fitid === prev.matchedTx.fitid && !x.used);
+            let c = credits.find(x => x.fitid === prev.matchedTx.fitid && !x.used);
+            if(!c){
+              const chaveAntiga = chaveConteudoTx(prev.matchedTx.date, prev.matchedTx.amount, prev.matchedTx.memo);
+              c = credits.find(x => !x.used && chaveConteudoTx(x.date, x.amount, x.memo) === chaveAntiga);
+            }
             if(c){
               n.matchedTx = c; c.used = true; n.resultado = 'ok';
               n.manualConfirm = prev.manualConfirm; n.matchedByNF = prev.matchedByNF;
