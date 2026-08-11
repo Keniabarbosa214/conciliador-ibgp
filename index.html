@@ -2841,11 +2841,16 @@ async function runReconciliation(opts){
     // maior, é enviado sem antes "Continuar" a sessão antiga), o sistema esquecia identificações
     // já feitas em dias anteriores, porque elas só existiam na memória daquele momento, não no
     // que estava salvo. A memória atual sempre tem prioridade — isso só completa o que faltar.
+    //
+    // IMPORTANTE: não filtra pelo formato da CHAVE (o texto do nome da sessão) — esse formato
+    // já mudou algumas vezes conforme o sistema evoluiu, então sessões salvas em momentos
+    // diferentes podem ter chaves com "aparência" diferente. Em vez disso, sempre varre TODAS
+    // as sessões salvas — na pior hipótese (contas diferentes com o mesmíssimo valor/data/memo,
+    // uma coincidência rara), o pior que acontece é herdar um fornecedor de outra conta, o que é
+    // inofensivo e facilmente corrigível — muito melhor que arriscar não achar a confirmação certa.
     try{
       const keys = await storageList('conc:');
-      const prefixoContaAtual = 'conc:' + slugify(contaAtualKey || CONTA_FIXA_KEY);
       for(const key of keys){
-        if(!key.startsWith(prefixoContaAtual)) continue; // só a mesma conta bancária
         if(key === currentSessionKey) continue; // essa já foi capturada da memória, acima
         const snap = await storageGet(key);
         if(!snap) continue;
@@ -2856,6 +2861,39 @@ async function runReconciliation(opts){
         (snap.credits||[]).forEach(c => {
           const ck = chaveConteudoTx(c.date, c.amount, c.memo);
           if(!prevCreditsByConteudo[ck]) prevCreditsByConteudo[ck] = c;
+        });
+        // Linhas do relatório que já estavam vinculadas a um pagamento (ou marcadas como "sem
+        // correspondência" de propósito) em outra sessão salva — reconstrói o vínculo usando o
+        // conteúdo do lançamento (data+valor+memo) daquela sessão, no mesmo formato que a
+        // restauração normal já espera (prev.matchedTx.fitid/date/amount/memo).
+        (snap.report||[]).forEach(r => {
+          if(!r.idReport || prevReportByID[String(r.idReport)]) return; // memória atual tem prioridade
+          if(r.resultado === 'ok' && r.matchedTxFitid){
+            const debitDaSessao = (snap.debits||[]).find(d => d.fitid === r.matchedTxFitid);
+            if(debitDaSessao){
+              prevReportByID[String(r.idReport)] = {
+                favorecido: r.favorecido, resultado: 'ok',
+                manualConfirm: r.manualConfirm, matchedById: r.matchedById, idValorDivergente: r.idValorDivergente,
+                matchedTx: { fitid: debitDaSessao.fitid, date: debitDaSessao.date, amount: debitDaSessao.amount, memo: debitDaSessao.memo }
+              };
+            }
+          } else if(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0){
+            prevReportByID[String(r.idReport)] = { resultado: 'bad', excludedReason: r.excludedReason };
+          }
+        });
+        (snap.reportReceber||[]).forEach(n => {
+          if(!n.numeroNF || prevReceberByNumeroNF[String(n.numeroNF)]) return;
+          if(n.resultado === 'ok' && n.matchedTxFitid){
+            const creditoDaSessao = (snap.credits||[]).find(c => c.fitid === n.matchedTxFitid);
+            if(creditoDaSessao){
+              prevReceberByNumeroNF[String(n.numeroNF)] = {
+                resultado: 'ok', manualConfirm: n.manualConfirm, matchedByNF: n.matchedByNF,
+                matchedTx: { fitid: creditoDaSessao.fitid, date: creditoDaSessao.date, amount: creditoDaSessao.amount, memo: creditoDaSessao.memo }
+              };
+            }
+          } else if(n.resultado === 'bad' && n.excludedReason && n.excludedReason.indexOf('Revisado manualmente') === 0){
+            prevReceberByNumeroNF[String(n.numeroNF)] = { resultado: 'bad', excludedReason: n.excludedReason };
+          }
         });
       }
     }catch(e){ console.warn('Não consegui consultar conciliações salvas anteriores pra preservar identificações:', e); }
