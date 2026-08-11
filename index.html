@@ -507,19 +507,27 @@
     </div>
 
     <div class="busca-global-bar" style="background:#EFE6D8;">
-      <span class="busca-global-label">📅 Fechamento mensal — junta todas as conciliações diárias salvas do mês escolhido</span>
+      <span class="busca-global-label">📅 Visão consolidada de um período — junta todas as conciliações diárias salvas e mostra tudo numa tela só</span>
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
         <select id="fechamentoConta" style="padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;min-width:180px;">
           <option value="">Todas as contas</option>
         </select>
-        <select id="fechamentoMes" style="padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <label style="font-size:12px;color:var(--ink-soft);">De</label>
+        <input type="date" id="fechamentoDe" style="padding:7px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <label style="font-size:12px;color:var(--ink-soft);">até</label>
+        <input type="date" id="fechamentoAte" style="padding:7px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
+        <button id="btnGerarFechamentoMensal" class="btn-aplicar-periodo">Gerar visão do período</button>
+      </div>
+      <div style="font-size:11px;color:var(--ink-soft);margin-top:4px;">
+        Prefere um mês inteiro? Deixe as datas em branco e escolha aqui:
+        <select id="fechamentoMes" style="padding:4px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:12px;">
           <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
           <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
           <option value="6">Julho</option><option value="7">Agosto</option><option value="8">Setembro</option>
           <option value="9">Outubro</option><option value="10">Novembro</option><option value="11">Dezembro</option>
         </select>
-        <input type="number" id="fechamentoAno" value="2026" min="2020" max="2099" style="width:80px;padding:8px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:13px;">
-        <button id="btnGerarFechamentoMensal" class="btn-aplicar-periodo">Gerar fechamento do mês</button>
+        <input type="number" id="fechamentoAno" value="2026" min="2020" max="2099" style="width:70px;padding:4px;border:1px solid var(--line);border-radius:3px;font-family:sans-serif;font-size:12px;">
+        — e clique em "Gerar visão do período" do mesmo jeito.
       </div>
       <div style="font-size:11px;color:var(--ink-soft);margin-top:4px;">⚠️ Escolha uma conta específica pra fechar corretamente o saldo bancário — "Todas as contas" soma tudo junto, útil só pra visão geral, não pra provar saldo de uma conta específica.</div>
       <div id="fechamentoMensalResultado"></div>
@@ -1878,14 +1886,27 @@ window.abrirSessaoDaBuscaGlobal = abrirSessaoDaBuscaGlobal;
 // Isso é o "fechamento mensal": a conciliação continua sendo feita dia a dia, mas o resultado
 // pra contabilidade precisa ser visto e exportado por mês inteiro.
 async function gerarFechamentoMensal(){
-  const mes = parseInt(document.getElementById('fechamentoMes').value, 10);
-  const ano = parseInt(document.getElementById('fechamentoAno').value, 10);
+  const deTxt = document.getElementById('fechamentoDe').value;
+  const ateTxt = document.getElementById('fechamentoAte').value;
+  const usaPeriodoCustomizado = !!(deTxt || ateTxt);
+
+  let inicioMes, fimMes, tituloPeriodo;
+  if(usaPeriodoCustomizado){
+    inicioMes = deTxt ? new Date(deTxt + 'T00:00:00') : new Date(2000,0,1);
+    fimMes = ateTxt ? new Date(ateTxt + 'T23:59:59') : new Date(2099,11,31,23,59,59);
+    tituloPeriodo = `${deTxt ? fmtDateISOtoBR(new Date(deTxt+'T00:00:00')) : 'início'} a ${ateTxt ? fmtDateISOtoBR(new Date(ateTxt+'T00:00:00')) : 'hoje'}`;
+  } else {
+    const mes = parseInt(document.getElementById('fechamentoMes').value, 10);
+    const ano = parseInt(document.getElementById('fechamentoAno').value, 10);
+    inicioMes = new Date(ano, mes, 1, 0, 0, 0);
+    fimMes = new Date(ano, mes + 1, 0, 23, 59, 59);
+    tituloPeriodo = `${MESES_NOMES[mes]}/${ano}`;
+  }
+
   const contaFiltro = document.getElementById('fechamentoConta').value; // '' = todas as contas
   const resultEl = document.getElementById('fechamentoMensalResultado');
-  resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Juntando todas as conciliações salvas de ${MESES_NOMES[mes]}/${ano}...</div>`;
+  resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Juntando todas as conciliações salvas de ${tituloPeriodo}...</div>`;
 
-  const inicioMes = new Date(ano, mes, 1, 0, 0, 0);
-  const fimMes = new Date(ano, mes + 1, 0, 23, 59, 59);
   const dentroDoMes = (dataStr) => {
     if(!dataStr) return false;
     const d = new Date(dataStr);
@@ -1927,7 +1948,7 @@ async function gerarFechamentoMensal(){
   const notasArr = [...notasMes.values()];
 
   if(debitosArr.length === 0 && creditosArr.length === 0){
-    resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nenhum lançamento de ${MESES_NOMES[mes]}/${ano} encontrado nas conciliações salvas. Confira se já processou o extrato desse mês.</div>`;
+    resultEl.innerHTML = `<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nenhum lançamento de ${tituloPeriodo} encontrado nas conciliações salvas. Confira se já processou o extrato desse período.</div>`;
     return;
   }
 
@@ -1942,11 +1963,46 @@ async function gerarFechamentoMensal(){
   const totalPendencias = debitosPendentes + creditosPendentes + reportPendente;
 
   const contaLabelUsada = contaFiltro ? (contasConhecidas[contaFiltro] || contaFiltro) : 'Todas as contas';
-  fechamentoMensalCache = { mes, ano, debitosArr, creditosArr, reportArr, notasArr, contaLabelUsada };
+  fechamentoMensalCache = { tituloPeriodo, debitosArr, creditosArr, reportArr, notasArr, contaLabelUsada };
+
+  // Monta a lista completa (entradas + saídas) em ordem cronológica, pra ver tudo numa tela só
+  const linhasDetalhe = [];
+  debitosArr.forEach(d => {
+    const r = reportArr.find(x => x.matchedTx && x.matchedTx.fitid === d.fitid);
+    let situacaoTxt, situacaoCor;
+    if(d.estornado){ situacaoTxt = '🔄 Estornado'; situacaoCor = 'var(--warn)'; }
+    else if(r){ situacaoTxt = '✅ Conciliado'; situacaoCor = 'var(--ok)'; }
+    else if(d.identStatus === 'auto'){ situacaoTxt = '✅ Identificado (banco)'; situacaoCor = 'var(--ok)'; }
+    else if(d.identStatus === 'manual'){ situacaoTxt = '✅ Identificado manual'; situacaoCor = 'var(--ok)'; }
+    else { situacaoTxt = '🔧 A conciliar'; situacaoCor = 'var(--bad)'; }
+    linhasDetalhe.push({ data: d.date, tipo: 'Saída', valor: Math.abs(d.amount), sinal: '-',
+      nome: r ? (r.favorecido||'') : (d.fornecedor||''), memo: d.memo, situacaoTxt, situacaoCor });
+  });
+  creditosArr.forEach(c => {
+    let situacaoTxt, situacaoCor;
+    if(c.used){ situacaoTxt = '✅ Conciliado (NF)'; situacaoCor = 'var(--ok)'; }
+    else if(isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)){ situacaoTxt = '🔄 Movimento interno'; situacaoCor = 'var(--warn)'; }
+    else if(c.cliente){ situacaoTxt = '✅ Identificado manual'; situacaoCor = 'var(--ok)'; }
+    else { situacaoTxt = '🔧 A conciliar'; situacaoCor = 'var(--bad)'; }
+    linhasDetalhe.push({ data: c.date, tipo: 'Entrada', valor: Math.abs(c.amount), sinal: '+',
+      nome: c.cliente || '', memo: c.memo, situacaoTxt, situacaoCor });
+  });
+  linhasDetalhe.sort((a,b) => new Date(a.data) - new Date(b.data));
+
+  const linhasHtml = linhasDetalhe.map(l => `
+    <tr>
+      <td class="data">${fmtDateISOtoBR(new Date(l.data))}</td>
+      <td><span class="pill ${l.tipo==='Entrada'?'ok':'bad'}">${l.tipo}</span></td>
+      <td class="valor" style="color:${l.tipo==='Entrada'?'var(--ok)':'var(--ink)'};">${l.sinal} ${fmtMoney(l.valor)}</td>
+      <td style="font-size:12px;">${l.nome || '<span style="color:var(--ink-soft);">—</span>'}</td>
+      <td style="font-size:11.5px;color:var(--ink-soft);">${l.memo}</td>
+      <td><span style="color:${l.situacaoCor};font-weight:700;font-size:12px;">${l.situacaoTxt}</span></td>
+    </tr>
+  `).join('');
 
   resultEl.innerHTML = `
     <div style="margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px;">
-      <div style="font-weight:700;color:var(--navy);margin-bottom:10px;">🏦 ${contaLabelUsada} — ${MESES_NOMES[mes]} / ${ano} — ${debitosArr.length + creditosArr.length} lançamentos do extrato, juntados de ${sessoesUsadas} conciliação(ões) diária(s) salva(s)</div>
+      <div style="font-weight:700;color:var(--navy);margin-bottom:10px;">🏦 ${contaLabelUsada} — ${tituloPeriodo} — ${debitosArr.length + creditosArr.length} lançamentos do extrato, juntados de ${sessoesUsadas} conciliação(ões) diária(s) salva(s)</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:10px;">
         <div><b style="font-size:16px;">${fmtMoney(totalDebitos)}</b><br><span style="font-size:11px;color:var(--ink-soft);">Total de saídas</span></div>
         <div><b style="font-size:16px;">${fmtMoney(totalCreditos)}</b><br><span style="font-size:11px;color:var(--ink-soft);">Total de entradas</span></div>
@@ -1955,16 +2011,25 @@ async function gerarFechamentoMensal(){
         <div><b style="font-size:16px;color:${reportPendente===0?'var(--ok)':'var(--bad)'};">${reportOk}/${reportArr.length}</b><br><span style="font-size:11px;color:var(--ink-soft);">Linhas do relatório conciliadas</span></div>
       </div>
       ${totalPendencias === 0
-        ? '<div style="color:var(--ok);font-weight:700;">✅ Mês totalmente conciliado — pronto para o fechamento contábil.</div>'
-        : '<div style="color:var(--bad);font-weight:700;">⚠️ Ainda tem '+totalPendencias+' item(ns) pendente(s) neste mês — resolva nas conciliações diárias (pela busca acima) antes de fechar.</div>'}
-      <button class="btn-aplicar-periodo" style="margin-top:10px;" onclick="exportarFechamentoMensal()">Exportar fechamento mensal (.xlsx)</button>
+        ? '<div style="color:var(--ok);font-weight:700;">✅ Período totalmente conciliado — pronto para o fechamento contábil.</div>'
+        : '<div style="color:var(--bad);font-weight:700;">⚠️ Ainda tem '+totalPendencias+' item(ns) pendente(s) neste período.</div>'}
+      <button class="btn-aplicar-periodo" style="margin-top:10px;" onclick="exportarFechamentoMensal()">Exportar esse período (.xlsx)</button>
+
+      <div style="margin-top:16px;max-height:520px;overflow-y:auto;border:1px solid var(--line);border-radius:4px;">
+        <table class="results" style="width:100%;">
+          <thead style="position:sticky;top:0;background:var(--navy-deep);"><tr>
+            <th>Data</th><th>Tipo</th><th>Valor</th><th>Fornecedor/Cliente</th><th>Memo</th><th>Situação</th>
+          </tr></thead>
+          <tbody>${linhasHtml}</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
 
 function exportarFechamentoMensal(){
-  if(!fechamentoMensalCache){ alert('Gere o fechamento do mês primeiro.'); return; }
-  const { mes, ano, debitosArr, creditosArr, reportArr, notasArr, contaLabelUsada } = fechamentoMensalCache;
+  if(!fechamentoMensalCache){ alert('Gere a visão do período primeiro.'); return; }
+  const { tituloPeriodo, debitosArr, creditosArr, reportArr, notasArr, contaLabelUsada } = fechamentoMensalCache;
   const linhas = [];
 
   debitosArr.forEach(d => {
@@ -2007,7 +2072,8 @@ function exportarFechamentoMensal(){
   const wsUnica = XLSX.utils.json_to_sheet(linhas);
   wsUnica['!cols'] = [{wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:26},{wch:30},{wch:45}];
   const wbOut = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wbOut, wsUnica, 'Fechamento ' + MESES_NOMES[mes]);
+  const nomeAbaSeguro = ('Fechamento ' + tituloPeriodo).replace(/[\/\\?*\[\]:]/g, '-').slice(0, 31);
+  XLSX.utils.book_append_sheet(wbOut, wsUnica, nomeAbaSeguro);
 
   const pendentesRelatorio = reportArr.filter(r => r.resultado === 'warn' || r.resultado === 'bad');
   if(pendentesRelatorio.length > 0){
@@ -2033,7 +2099,7 @@ function exportarFechamentoMensal(){
     XLSX.utils.book_append_sheet(wbOut, wsNotas, 'Notas Fiscais Pendentes');
   }
 
-  XLSX.writeFile(wbOut, `fechamento_${slugify(contaLabelUsada)}_${MESES_NOMES[mes].toLowerCase()}_${ano}.xlsx`);
+  XLSX.writeFile(wbOut, `fechamento_${slugify(contaLabelUsada)}_${slugify(tituloPeriodo)}.xlsx`);
 }
 window.exportarFechamentoMensal = exportarFechamentoMensal;
 
