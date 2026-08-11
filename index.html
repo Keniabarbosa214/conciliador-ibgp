@@ -74,6 +74,10 @@
   .fechamento-panel.incompleto h3{ color:var(--warn); }
   .fechamento-panel ul{ margin:6px 0 0; padding-left:20px; }
   .fechamento-panel li{ margin-bottom:3px; }
+  .aviso-em-aberto{
+    margin-top:10px; padding-top:10px; border-top:1px dashed rgba(0,0,0,.15);
+    font-size:12.5px; color:var(--ink);
+  }
 
   .period-edit-bar{
     background:#fff; border:1px solid var(--line); border-radius:4px; padding:10px 16px;
@@ -2294,6 +2298,12 @@ function isBankOperation(memo){
 function isMesmaTitularidade(memo){
   return normalize(memo).includes('MESMA TIT');
 }
+// "Parcelas de subscrição/integralização" — é a cota de capital do cooperado no Sicoob (não é
+// pagamento a fornecedor nenhum), então entra automático com fornecedor=banco e centro de
+// custo/projeto fixos, igual tarifa e IOF.
+function isParcelaSubscricaoIntegralizacao(memo){
+  return normalize(memo).includes('PARCELAS SUBSC') || normalize(memo).includes('SUBSC INTEGR') || normalize(memo).includes('SUBSC./INTEGR');
+}
 function isResgateAplicacao(memo){
   return normalize(memo).includes('RESGATE');
 }
@@ -2783,7 +2793,7 @@ function mostrarErroConciliacao(msg){
   alert(msg); // e sempre mostra visível, não importa em qual tela a pessoa esteja
 }
 
-function runReconciliation(opts){
+async function runReconciliation(opts){
   opts = opts || {};
   const preservar = opts.preservar !== false; // por padrão SEMPRE preserva o que já foi feito
   try{
@@ -2825,6 +2835,30 @@ function runReconciliation(opts){
       prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)] = c;
     });
     reportReceber.forEach(n => { if(n.numeroNF) prevReceberByNumeroNF[String(n.numeroNF)] = n; });
+
+    // Além da memória atual do navegador, busca em TODAS as conciliações já salvas da MESMA
+    // conta — sem isso, cada vez que a página é recarregada (ou um extrato novo, com período
+    // maior, é enviado sem antes "Continuar" a sessão antiga), o sistema esquecia identificações
+    // já feitas em dias anteriores, porque elas só existiam na memória daquele momento, não no
+    // que estava salvo. A memória atual sempre tem prioridade — isso só completa o que faltar.
+    try{
+      const keys = await storageList('conc:');
+      const prefixoContaAtual = 'conc:' + slugify(contaAtualKey || CONTA_FIXA_KEY);
+      for(const key of keys){
+        if(!key.startsWith(prefixoContaAtual)) continue; // só a mesma conta bancária
+        if(key === currentSessionKey) continue; // essa já foi capturada da memória, acima
+        const snap = await storageGet(key);
+        if(!snap) continue;
+        (snap.debits||[]).forEach(d => {
+          const ck = chaveConteudoTx(d.date, d.amount, d.memo);
+          if(!prevDebitsByConteudo[ck]) prevDebitsByConteudo[ck] = d;
+        });
+        (snap.credits||[]).forEach(c => {
+          const ck = chaveConteudoTx(c.date, c.amount, c.memo);
+          if(!prevCreditsByConteudo[ck]) prevCreditsByConteudo[ck] = c;
+        });
+      }
+    }catch(e){ console.warn('Não consegui consultar conciliações salvas anteriores pra preservar identificações:', e); }
   }
 
   // parse extrato (OFX ou XLS, dependendo do que foi enviado)
@@ -2874,6 +2908,11 @@ function runReconciliation(opts){
       d.fornecedor = 'PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)';
       d.identStatus = 'auto';
       d.centroCusto = d.centroCusto || '';
+    } else if(isParcelaSubscricaoIntegralizacao(d.memo)){
+      d.fornecedor = bankName;
+      d.identStatus = 'auto';
+      d.centroCusto = '17000 - Financeiro - Taxas Bancárias';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     } else if(isBankOperation(d.memo)){
       d.fornecedor = bankName;
       d.identStatus = 'auto';
@@ -3293,7 +3332,10 @@ function renderSummary(){
   const valorTotal = report.reduce((s,r)=> s + (r.valor||0), 0);
   const valorOk = report.filter(r=>r.resultado==='ok').reduce((s,r)=> s + (r.valor||0), 0);
   const linhasExcluidas = report.filter(r=>r.resultado==='excluded');
-  const valorExcluido = linhasExcluidas.reduce((s,r)=> s + (r.valor||0), 0);
+  const linhasEmAberto = linhasExcluidas.filter(r => (r.status||'').toLowerCase() === 'aberto');
+  const linhasFalha = linhasExcluidas.filter(r => (r.status||'').toLowerCase().startsWith('falha'));
+  const valorEmAberto = linhasEmAberto.reduce((s,r)=> s + (r.valor||0), 0);
+  const valorFalha = linhasFalha.reduce((s,r)=> s + (r.valor||0), 0);
 
   const totalDebitosPeriodo = debits.reduce((s,d)=> s + Math.abs(d.amount), 0);
   const totalCreditosPeriodo = credits.reduce((s,c)=> s + Math.abs(c.amount), 0);
@@ -3311,9 +3353,13 @@ function renderSummary(){
       <div class="num">${fmtMoney(valorOk)}</div>
       <div class="lbl">Conciliado automático (R$)</div>
     </div>
-    <div class="card ${valorExcluido>0?'warn':''}">
-      <div class="num">${fmtMoney(valorExcluido)}</div>
-      <div class="lbl">Excluído por status "Aberto"/"Falha" (R$)${linhasExcluidas.length>0 ? '<br><span style="font-weight:400;font-size:10.5px;">'+linhasExcluidas.length+' linha(s) — ainda não deveriam ter sido pagas</span>' : ''}</div>
+    <div class="card ${linhasEmAberto.length>0?'warn':''}">
+      <div class="num">${fmtMoney(valorEmAberto)}</div>
+      <div class="lbl">📋 Pagamentos em aberto neste período (R$)${linhasEmAberto.length>0 ? '<br><span style="font-weight:400;font-size:10.5px;">'+linhasEmAberto.length+' linha(s) do relatório ainda não pagas — indicativo de contas a pagar</span>' : ''}</div>
+    </div>
+    <div class="card ${linhasFalha.length>0?'bad':''}">
+      <div class="num">${fmtMoney(valorFalha)}</div>
+      <div class="lbl">Falha no pagamento (R$)${linhasFalha.length>0 ? '<br><span style="font-weight:400;font-size:10.5px;">'+linhasFalha.length+' linha(s) — pagamento tentado e não efetivado</span>' : ''}</div>
     </div>
     <div class="card ${bad>0?'bad':''}">
       <div class="num">${bad}</div>
@@ -3346,10 +3392,10 @@ function renderSummary(){
 
   renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo);
   renderLegend();
-  renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo);
+  renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo, linhasEmAberto.length, valorEmAberto);
 }
 
-function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo){
+function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo, qtdEmAberto, valorEmAberto){
   const panel = document.getElementById('fechamentoPanel');
   if(!panel) return;
   const pendencias = [];
@@ -3369,12 +3415,18 @@ function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, tot
     pendencias.push('saldo final calculado NÃO bate com o saldo informado pelo extrato');
   }
 
+  // Indicativo informativo — não impede o fechamento (são pagamentos legitimamente ainda não
+  // vencidos/pagos), mas precisa ficar visível como "contas a pagar em aberto" desse período.
+  const avisoAberto = qtdEmAberto > 0
+    ? `<div class="aviso-em-aberto">📋 <b>${qtdEmAberto} pagamento(s) do relatório ainda em aberto</b> neste período (R$ ${fmtMoney(valorEmAberto)}) — ainda não vencidos/pagos, não bloqueia o fechamento, mas fica como indicativo de contas a pagar.</div>`
+    : '';
+
   if(pendencias.length === 0){
     panel.className = 'fechamento-panel completo';
-    panel.innerHTML = `<h3>✅ Conciliação fechada</h3>Todas as linhas do relatório estão pagas e conciliadas (ou legitimamente fora do período), todos os pagamentos do extrato estão identificados, e o saldo do período bate. Pronta para a contabilidade.`;
+    panel.innerHTML = `<h3>✅ Conciliação fechada</h3>Todas as linhas do relatório estão pagas e conciliadas (ou legitimamente fora do período), todos os pagamentos do extrato estão identificados, e o saldo do período bate. Pronta para a contabilidade.${avisoAberto}`;
   } else {
     panel.className = 'fechamento-panel incompleto';
-    panel.innerHTML = `<h3>⚠️ Conciliação ainda não está fechada</h3>Falta resolver antes de considerar pronta pra contabilidade:<ul>${pendencias.map(p=>'<li>'+p+'</li>').join('')}</ul>`;
+    panel.innerHTML = `<h3>⚠️ Conciliação ainda não está fechada</h3>Falta resolver antes de considerar pronta pra contabilidade:<ul>${pendencias.map(p=>'<li>'+p+'</li>').join('')}</ul>${avisoAberto}`;
   }
 }
 
