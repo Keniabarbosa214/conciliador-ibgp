@@ -1923,19 +1923,52 @@ async function gerarFechamentoMensal(){
   for(const key of keys){
     const snap = await storageGet(key);
     if(!snap) continue;
-    if(contaFiltro && (snap.contaKey||'') !== contaFiltro) continue; // pula sessões de outras contas
+    // Compara pelo NOME da conta (mais estável), não pela chave técnica — essa chave já mudou de
+    // formato algumas vezes conforme o sistema evoluiu, então comparar só por ela descartava
+    // sessões salvas de formatos antigos, mesmo sendo da conta certa.
+    if(contaFiltro){
+      const labelFiltro = contasConhecidas[contaFiltro] || contaFiltro;
+      const bateConta = (snap.contaKey||'') === contaFiltro || (snap.contaLabel||'') === labelFiltro;
+      if(!bateConta) continue;
+    }
     let usouEssaSessao = false;
-    (snap.debits||[]).forEach(d => { if(dentroDoMes(d.date)){ debitosMes.set(d.fitid, d); usouEssaSessao = true; } });
-    (snap.credits||[]).forEach(c => { if(dentroDoMes(c.date)){ creditosMes.set(c.fitid, c); usouEssaSessao = true; } });
+    // Quando o mesmo lançamento/linha aparece em mais de uma sessão salva (comum: relatório de
+    // cobranças e notas fiscais são reexportados de forma cumulativa, então a mesma linha aparece
+    // de novo em cada dia), sempre PREFERE a versão já identificada/conciliada — nunca deixa uma
+    // sessão mais antiga (ou só reprocessada depois) apagar uma confirmação que já existia.
+    (snap.debits||[]).forEach(d => {
+      if(!dentroDoMes(d.date)) return;
+      const existente = debitosMes.get(d.fitid);
+      const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
+      const existenteResolvido = existente && (existente.used || existente.identStatus === 'auto' || existente.identStatus === 'manual' || existente.estornado);
+      if(!existente || (!existenteResolvido && dResolvido)) debitosMes.set(d.fitid, d);
+      usouEssaSessao = true;
+    });
+    (snap.credits||[]).forEach(c => {
+      if(!dentroDoMes(c.date)) return;
+      const existente = creditosMes.get(c.fitid);
+      const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
+      const existenteResolvido = existente && (existente.used || !!existente.cliente || isResgateAplicacao(existente.memo) || isDevolucao(existente.memo) || isMesmaTitularidade(existente.memo));
+      if(!existente || (!existenteResolvido && cResolvido)) creditosMes.set(c.fitid, c);
+      usouEssaSessao = true;
+    });
     (snap.report||[]).forEach(r => {
       if(dentroDoMes(r.pagoEm)){
-        reportMes.set(r.idReport + '|' + r.empresa + '|' + r.valor, r);
+        const chave = r.idReport + '|' + r.empresa + '|' + r.valor;
+        const existente = reportMes.get(chave);
+        if(!existente || (existente.resultado !== 'ok' && r.resultado === 'ok')){
+          reportMes.set(chave, r);
+        }
         usouEssaSessao = true;
       }
     });
     (snap.reportReceber||[]).forEach(n => {
       if(dentroDoMes(n.dataEmissao)){
-        notasMes.set(n.numeroNF + '|' + n.cnpjCliente, n);
+        const chave = n.numeroNF + '|' + n.cnpjCliente;
+        const existente = notasMes.get(chave);
+        if(!existente || (existente.resultado !== 'ok' && n.resultado === 'ok')){
+          notasMes.set(chave, n);
+        }
         usouEssaSessao = true;
       }
     });
@@ -2922,43 +2955,56 @@ async function runReconciliation(opts){
         if(!snap) continue;
         (snap.debits||[]).forEach(d => {
           const ck = chaveConteudoTx(d.date, d.amount, d.memo);
-          if(!prevDebitsByConteudo[ck]) prevDebitsByConteudo[ck] = d;
+          const existente = prevDebitsByConteudo[ck];
+          const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
+          const existenteResolvido = existente && (existente.used || existente.identStatus === 'auto' || existente.identStatus === 'manual' || existente.estornado);
+          if(!existente || (!existenteResolvido && dResolvido)) prevDebitsByConteudo[ck] = d;
         });
         (snap.credits||[]).forEach(c => {
           const ck = chaveConteudoTx(c.date, c.amount, c.memo);
-          if(!prevCreditsByConteudo[ck]) prevCreditsByConteudo[ck] = c;
+          const existente = prevCreditsByConteudo[ck];
+          const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
+          const existenteResolvido = existente && (existente.used || !!existente.cliente || isResgateAplicacao(existente.memo) || isDevolucao(existente.memo) || isMesmaTitularidade(existente.memo));
+          if(!existente || (!existenteResolvido && cResolvido)) prevCreditsByConteudo[ck] = c;
         });
         // Linhas do relatório que já estavam vinculadas a um pagamento (ou marcadas como "sem
         // correspondência" de propósito) em outra sessão salva — reconstrói o vínculo usando o
         // conteúdo do lançamento (data+valor+memo) daquela sessão, no mesmo formato que a
-        // restauração normal já espera (prev.matchedTx.fitid/date/amount/memo).
+        // restauração normal já espera (prev.matchedTx.fitid/date/amount/memo). Sempre prefere
+        // a versão JÁ CONCILIADA — nunca deixa uma cópia pendente de outra sessão prevalecer.
         (snap.report||[]).forEach(r => {
-          if(!r.idReport || prevReportByID[String(r.idReport)]) return; // memória atual tem prioridade
+          if(!r.idReport) return;
+          const chaveId = String(r.idReport);
+          const jaTem = prevReportByID[chaveId];
+          if(jaTem && jaTem.resultado === 'ok') return; // já achou uma versão conciliada, não precisa de mais nada
           if(r.resultado === 'ok' && r.matchedTxFitid){
             const debitDaSessao = (snap.debits||[]).find(d => d.fitid === r.matchedTxFitid);
             if(debitDaSessao){
-              prevReportByID[String(r.idReport)] = {
+              prevReportByID[chaveId] = {
                 favorecido: r.favorecido, resultado: 'ok',
                 manualConfirm: r.manualConfirm, matchedById: r.matchedById, idValorDivergente: r.idValorDivergente,
                 matchedTx: { fitid: debitDaSessao.fitid, date: debitDaSessao.date, amount: debitDaSessao.amount, memo: debitDaSessao.memo }
               };
             }
-          } else if(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0){
-            prevReportByID[String(r.idReport)] = { resultado: 'bad', excludedReason: r.excludedReason };
+          } else if(!jaTem && r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0){
+            prevReportByID[chaveId] = { resultado: 'bad', excludedReason: r.excludedReason };
           }
         });
         (snap.reportReceber||[]).forEach(n => {
-          if(!n.numeroNF || prevReceberByNumeroNF[String(n.numeroNF)]) return;
+          if(!n.numeroNF) return;
+          const chaveNF = String(n.numeroNF);
+          const jaTem = prevReceberByNumeroNF[chaveNF];
+          if(jaTem && jaTem.resultado === 'ok') return;
           if(n.resultado === 'ok' && n.matchedTxFitid){
             const creditoDaSessao = (snap.credits||[]).find(c => c.fitid === n.matchedTxFitid);
             if(creditoDaSessao){
-              prevReceberByNumeroNF[String(n.numeroNF)] = {
+              prevReceberByNumeroNF[chaveNF] = {
                 resultado: 'ok', manualConfirm: n.manualConfirm, matchedByNF: n.matchedByNF,
                 matchedTx: { fitid: creditoDaSessao.fitid, date: creditoDaSessao.date, amount: creditoDaSessao.amount, memo: creditoDaSessao.memo }
               };
             }
-          } else if(n.resultado === 'bad' && n.excludedReason && n.excludedReason.indexOf('Revisado manualmente') === 0){
-            prevReceberByNumeroNF[String(n.numeroNF)] = { resultado: 'bad', excludedReason: n.excludedReason };
+          } else if(!jaTem && n.resultado === 'bad' && n.excludedReason && n.excludedReason.indexOf('Revisado manualmente') === 0){
+            prevReceberByNumeroNF[chaveNF] = { resultado: 'bad', excludedReason: n.excludedReason };
           }
         });
       }
