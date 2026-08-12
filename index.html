@@ -3615,7 +3615,7 @@ function renderSummary(){
   const total = report.length;
   const ok = report.filter(r=>r.resultado==='ok').length;
   const warn = report.filter(r=>r.resultado==='warn').length;
-  const bad = report.filter(r=>r.resultado==='bad').length;
+  const bad = report.filter(r=>r.resultado==='bad' && !(r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0)).length;
   const valorTotal = report.reduce((s,r)=> s + (r.valor||0), 0);
   const valorOk = report.filter(r=>r.resultado==='ok').reduce((s,r)=> s + (r.valor||0), 0);
   const linhasExcluidas = report.filter(r=>r.resultado==='excluded');
@@ -3696,7 +3696,7 @@ function renderSummary(){
 
   document.getElementById('cPend').textContent = '(' + (warn+bad+debitosPendentesId) + ')';
   document.getElementById('cOk').textContent = '(' + ok + ')';
-  document.getElementById('cReceber').textContent = '(' + reportReceber.filter(n=>n.resultado==='warn'||n.resultado==='bad').length + ')';
+  document.getElementById('cReceber').textContent = '(' + reportReceber.filter(n=>(n.resultado==='warn'||n.resultado==='bad') && !(n.resultado==='bad' && n.excludedReason && n.excludedReason.indexOf('Revisado manualmente')===0)).length + ')';
   document.getElementById('cRec').textContent = '(' + credits.length + ')';
   document.getElementById('cMov').textContent = '(' + (debits.length + credits.length) + ')';
   document.getElementById('cExtratoCompleto').textContent = '(' + (debitosACompletar + creditosACompletar) + ' a conciliar)';
@@ -3989,7 +3989,8 @@ function renderResults(){
   }
 
   if(currentTab === 'receber'){
-    const rowsReceber = reportReceber.filter(n => (n.resultado === 'warn' || n.resultado === 'bad') && (
+    const foiRevisadaManualmenteNF = (n) => n.resultado === 'bad' && n.excludedReason && n.excludedReason.indexOf('Revisado manualmente') === 0;
+    const rowsReceber = reportReceber.filter(n => (n.resultado === 'warn' || n.resultado === 'bad') && !foiRevisadaManualmenteNF(n) && (
       !searchTerm || normalize([n.nomeCliente, n.numeroNF, n.cnpjCliente].join(' ')).includes(normalize(searchTerm)) || valorMatchesSearch(n.valorLiquido, searchTerm)
     ));
     if(!nfseRaw){
@@ -4127,8 +4128,9 @@ function renderResults(){
     return;
   }
 
+  const foiRevisadaManualmente = (r) => r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0;
   const rows = currentTab === 'pendentes'
-    ? report.filter(r => (r.resultado === 'warn' || r.resultado === 'bad') && matchesSearch(r))
+    ? report.filter(r => (r.resultado === 'warn' || r.resultado === 'bad') && !foiRevisadaManualmente(r) && matchesSearch(r))
     : report.filter(r => r.resultado === currentTab && matchesSearch(r));
   if(rows.length===0 && currentTab !== 'pendentes'){
     wrap.innerHTML = '<div class="empty-state">Nada por aqui — bom sinal 🎉</div>';
@@ -4786,7 +4788,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   // linhas sem correspondência no extrato, sugestões não confirmadas, E também as que estão
   // com status "Aberto"/"Falha no pagamento" no relatório (que nem tentam cruzar com o banco,
   // mas continuam sendo um valor que o IBGP ainda deve).
-  const pendentesRelatorio = report.filter(r => r.resultado === 'warn' || r.resultado === 'bad' || r.resultado === 'excluded');
+  const pendentesRelatorio = report.filter(r => (r.resultado === 'warn' || r.resultado === 'bad' || r.resultado === 'excluded') && !(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0));
   if(pendentesRelatorio.length > 0){
     const totalPendente = pendentesRelatorio.reduce((s,r)=> s + (r.valor||0), 0);
     const pendentesRows = pendentesRelatorio.map(r => {
