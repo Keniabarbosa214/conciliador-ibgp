@@ -4875,7 +4875,7 @@ btnRun.addEventListener('click', async ()=>{
   const prospectiveKey = buildSessionKey();
   const existing = await storageGet(prospectiveKey);
   if(existing){
-    const ok = confirm('Já existe uma conciliação salva para esses dois arquivos (salva em ' + new Date(existing.savedAt).toLocaleString('pt-BR') + ').\n\nClique OK para REFAZER do zero (o progresso salvo será substituído), ou Cancelar para voltar e usar o botão "Continuar" na lista de conciliações salvas.');
+    const ok = confirm('Já existe uma conciliação salva para esses dois arquivos (salva em ' + new Date(existing.savedAt).toLocaleString('pt-BR') + ').\n\nClique OK para reprocessar (o que já foi identificado antes é preservado automaticamente, tanto dessa sessão quanto de qualquer outra já salva), ou Cancelar para voltar e usar o botão "Continuar" na lista de conciliações salvas.');
     if(!ok) return;
   }
   runReconciliation();
