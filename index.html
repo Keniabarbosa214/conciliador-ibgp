@@ -3375,13 +3375,36 @@ async function runReconciliation(opts){
     }
   });
 
+  // Período efetivo desta conciliação: usa o que foi configurado manualmente (De/Até), ou,
+  // se não configurado, o próprio intervalo de datas real do extrato enviado. Uma linha do
+  // relatório com "Pago em" fora desse intervalo não tem CHANCE de achar correspondência aqui
+  // — ela pertence a outro período (já conciliado antes, ou ainda por vir), e contá-la como
+  // "sem correspondência" deste período inflava a lista sem motivo.
+  const todasDatasExtrato = [...debits, ...credits].map(t => t.date).filter(Boolean);
+  const periodoEfetivoDe = periodoDe || (todasDatasExtrato.length ? new Date(Math.min(...todasDatasExtrato)) : null);
+  const periodoEfetivoAte = periodoAte || (todasDatasExtrato.length ? new Date(Math.max(...todasDatasExtrato)) : null);
+  const dentroDoPeriodoEfetivo = (dataPagoEm) => {
+    if(!periodoEfetivoDe && !periodoEfetivoAte) return true; // sem nenhuma referência, não filtra
+    if(!dataPagoEm) return false;
+    const d = new Date(dataPagoEm);
+    if(periodoEfetivoDe && d < periodoEfetivoDe) return false;
+    if(periodoEfetivoAte && d > new Date(periodoEfetivoAte.getTime() + 24*60*60*1000 - 1)) return false; // inclui o dia final inteiro
+    return true;
+  };
+
   // Filter which rows are eligible for matching
   const eligible = report.filter(r => {
     if(r.resultado === 'ok') return false; // já resolvido pelo número de pagamento ou restaurado
     if(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0) return false; // decisão manual preservada
     if(ignorarAberto && r.status.toLowerCase() === 'aberto') return false;
     if(ignorarFalha && r.status.toLowerCase().startsWith('falha')) return false;
-    return r.valor !== null && r.pagoEm !== null;
+    if(r.valor === null || r.pagoEm === null) return false;
+    if(!dentroDoPeriodoEfetivo(r.pagoEm)){
+      r.resultado = 'excluded';
+      r.excludedReason = 'Fora do período desta conciliação (Pago em ' + fmtDateISOtoBR(r.pagoEm) + ') — pertence a outro período';
+      return false;
+    }
+    return true;
   });
 
   // Build candidate lists
