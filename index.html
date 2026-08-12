@@ -3476,7 +3476,17 @@ async function runReconciliation(opts){
   if(rows.length===0){ mostrarErroConciliacao('A planilha parece vazia.'); return; }
 
   report = rows.map((r, i) => {
-    const valor = parseValorBR(r['VALOR']);
+    let valor = parseValorBR(r['VALOR']);
+    // Proteção contra valor corrompido/absurdo (ex: célula da planilha com número de série de
+    // data, fórmula quebrada, ou erro de digitação de várias ordens de grandeza) — um único
+    // valor desses pode inflar TODOS os totais da conciliação sem dar nenhum aviso visível.
+    // Nenhum pagamento avulso da empresa chega a R$ 10 milhões, então acima disso é suspeito.
+    const LIMITE_VALOR_RAZOAVEL = 10000000;
+    let valorSuspeito = false;
+    if(valor !== null && Math.abs(valor) > LIMITE_VALOR_RAZOAVEL){
+      valorSuspeito = true;
+      valor = null; // não deixa esse valor entrar em nenhuma soma
+    }
     const pagoEm = parseDateBR(r['PAGO EM']) || parseDateBR(r['PAGAMENTO DEVIDO EM']);
     return {
       rowIndex: i,
@@ -3488,11 +3498,14 @@ async function runReconciliation(opts){
       empresa: r['EMPRESA'] || '',
       centroCusto: r['CENTRO DE CUSTO'] || '',
       projeto: r['PROJETO'] || '',
-      observacoes: r['OBSERVAÇÕES'] || r['OBSERVACOES'] || '',
+      observacoes: valorSuspeito
+        ? '⚠️ VALOR ORIGINAL SUSPEITO (' + fmtMoney(parseValorBR(r['VALOR'])||0) + ') — parece erro na planilha, revise a célula VALOR dessa linha. ' + (r['OBSERVAÇÕES'] || r['OBSERVACOES'] || '')
+        : (r['OBSERVAÇÕES'] || r['OBSERVACOES'] || ''),
       descricao: r['DESCRICAO'] || '',
       idReport: r['ID'] || '',
       idTransacao: r['ID TRANSAÇÃO'] || r['ID TRANSACAO'] || '',
-      resultado: null, // 'ok' | 'warn' | 'bad'
+      resultado: valorSuspeito ? 'bad' : null, // força "sem correspondência" — nunca deixa esse tipo de linha ser "resolvida" sozinha
+      excludedReason: valorSuspeito ? 'Valor suspeito na planilha original — revise antes de conciliar' : null,
       matchedTx: null,
       candidates: [],
       manualConfirm: false
