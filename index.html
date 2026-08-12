@@ -555,6 +555,23 @@
       <div id="repararResultado" style="margin-top:8px;font-size:12.5px;"></div>
     </div>
 
+    <div class="busca-global-bar" style="background:#FFF3D6;border:1.5px solid var(--gold);">
+      <span class="busca-global-label" style="color:#7A5B00;">🔧 Preencher Projeto em branco — num período específico</span>
+      <p style="font-size:12px;color:var(--ink);margin:6px 0;">
+        Preenche o campo <b>Projeto</b> com <code>00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP</code> em
+        todo lançamento (relatório, saídas e entradas) já identificado/conciliado que estiver com Projeto em branco,
+        dentro do período abaixo. Só preenche o que está vazio — nunca sobrescreve um Projeto que já foi escolhido.
+      </p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <label style="font-size:12px;color:var(--ink-soft);">De</label>
+        <input type="date" id="preencherProjetoDe" value="2026-08-01" style="padding:7px;border:1px solid var(--line);border-radius:3px;">
+        <label style="font-size:12px;color:var(--ink-soft);">até</label>
+        <input type="date" id="preencherProjetoAte" value="2026-08-11" style="padding:7px;border:1px solid var(--line);border-radius:3px;">
+        <button id="btnPreencherProjeto" class="btn-aplicar-periodo" style="background:#B8860B;">Preencher Projeto em branco agora</button>
+      </div>
+      <div id="preencherProjetoResultado" style="margin-top:8px;font-size:12.5px;"></div>
+    </div>
+
     <div id="savedSessions" class="saved-sessions"></div>
 
     <div class="upload-grid">
@@ -1356,6 +1373,70 @@ async function repararIdentificadoresSalvos(){
   btn.disabled = false;
 }
 document.getElementById('btnRepararIdentificadores').addEventListener('click', repararIdentificadoresSalvos);
+
+const PROJETO_INSTITUCIONAL_PADRAO = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+
+async function preencherProjetoEmBranco(){
+  const deTxt = document.getElementById('preencherProjetoDe').value;
+  const ateTxt = document.getElementById('preencherProjetoAte').value;
+  const resultEl = document.getElementById('preencherProjetoResultado');
+  const btn = document.getElementById('btnPreencherProjeto');
+  if(!deTxt || !ateTxt){ alert('Preencha as duas datas antes de rodar.'); return; }
+  const inicio = new Date(deTxt + 'T00:00:00');
+  const fim = new Date(ateTxt + 'T23:59:59');
+  const dentroDoPeriodo = (dataStr) => {
+    if(!dataStr) return false;
+    const d = new Date(dataStr);
+    return d >= inicio && d <= fim;
+  };
+
+  btn.disabled = true;
+  resultEl.innerHTML = 'Lendo todas as conciliações salvas...';
+  const keys = await storageList('conc:');
+  if(!keys || keys.length === 0){
+    resultEl.innerHTML = 'Nenhuma conciliação salva encontrada.';
+    btn.disabled = false;
+    return;
+  }
+
+  let sessõesAlteradas = 0, camposPreenchidos = 0;
+  for(const key of keys){
+    const snap = await storageGet(key);
+    if(!snap) continue;
+    let mudouAlgo = false;
+
+    (snap.report||[]).forEach(r => {
+      if(r.resultado === 'ok' && dentroDoPeriodo(r.pagoEm) && (!r.projeto || !r.projeto.trim())){
+        r.projeto = PROJETO_INSTITUCIONAL_PADRAO;
+        mudouAlgo = true; camposPreenchidos++;
+      }
+    });
+    (snap.debits||[]).forEach(d => {
+      const resolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual';
+      if(resolvido && dentroDoPeriodo(d.date) && (!d.projeto || !d.projeto.trim())){
+        d.projeto = PROJETO_INSTITUCIONAL_PADRAO;
+        mudouAlgo = true; camposPreenchidos++;
+      }
+    });
+    (snap.credits||[]).forEach(c => {
+      const resolvido = c.used || !!c.cliente;
+      if(resolvido && dentroDoPeriodo(c.date) && (!c.projeto || !c.projeto.trim())){
+        c.projeto = PROJETO_INSTITUCIONAL_PADRAO;
+        mudouAlgo = true; camposPreenchidos++;
+      }
+    });
+
+    if(mudouAlgo){
+      await storageSet(key, snap);
+      sessõesAlteradas++;
+    }
+    resultEl.innerHTML = `Preenchendo... ${sessõesAlteradas} sessão(ões) alterada(s) até agora.`;
+  }
+
+  resultEl.innerHTML = `✅ Pronto! ${camposPreenchidos} campo(s) de Projeto preenchido(s) em ${sessõesAlteradas} de ${keys.length} conciliação(ões) salva(s), no período de ${deTxt.split('-').reverse().join('/')} a ${ateTxt.split('-').reverse().join('/')}. Gere a "Visão consolidada" de novo pra confirmar.`;
+  btn.disabled = false;
+}
+document.getElementById('btnPreencherProjeto').addEventListener('click', preencherProjetoEmBranco);
 
 let debits = [];          // parsed bank DEBIT transactions
 let credits = [];         // parsed bank CREDIT transactions (kept for reference)
@@ -3183,6 +3264,11 @@ async function runReconciliation(opts){
     c.centroCusto = c.centroCusto || (ehMovimentoInterno ? '' : centroCustoReceberPadrao);
     c.projeto = c.projeto || '';
     c.observacoes = c.observacoes || '';
+    // Resgate de aplicação (RDC) é sempre dinheiro voltando pra própria empresa — não é receita
+    // de cliente nenhum, então o "fornecedor/cliente" desse lançamento é sempre o institucional.
+    if(isResgateAplicacao(c.memo)){
+      c.cliente = 'INSTITUTO BRASILEIRO DE GESTAO E PESQUISA';
+    }
   });
   const bankName = (document.getElementById('cfgBankName').value || 'SICOOB').trim().toUpperCase() || 'SICOOB';
   debits.forEach(d => {
