@@ -4191,6 +4191,9 @@ function renderResults(){
             <button class="link-btn" style="text-decoration:none;color:var(--navy);font-weight:600;" onclick="toggleBuscaValorPagamento(${r.rowIndex})">🔍 Buscar no extrato (valor pode ter mudado)</button>
             <div id="buscaValorPag-${r.rowIndex}" style="display:none;margin-top:6px;"></div>
           </div>
+          <div class="cand-actions" style="margin-top:6px;">
+            <button class="link-btn" onclick="markNoMatch(${r.rowIndex})">✓ Revisei — é duplicata ou não tem pagamento real (marcar como resolvido)</button>
+          </div>
         </td>`;
       }
       html += `</tr>`;
