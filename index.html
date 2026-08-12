@@ -3627,6 +3627,26 @@ function renderSummary(){
   const totalMesmaTitCredito = credits.filter(c=>isMesmaTitularidade(c.memo)).reduce((s,c)=> s + Math.abs(c.amount), 0);
   const totalCreditosEfetivos = totalCreditosPeriodo - totalResgates - totalDevolucoes - totalMesmaTitCredito;
 
+  // Lançamentos/linhas que JÁ estão identificados/conciliados, mas sem Centro de Custo e/ou
+  // Projeto preenchido — obrigatório pra contabilidade, então conta como pendência mesmo já
+  // tendo fornecedor/cliente identificado. (Calculado ANTES do resumo, porque é usado nele.)
+  const faltaCCouProjeto = (cc, proj) => !cc || !cc.trim() || !proj || !proj.trim();
+  const debitosSemCCProjeto = debits.filter(d => {
+    const resolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual';
+    if(!resolvido || d.estornado) return false;
+    const r = d.used ? report.find(x => x.matchedTx && x.matchedTx.fitid === d.fitid) : null;
+    const cc = r ? r.centroCusto : d.centroCusto;
+    const proj = r ? r.projeto : d.projeto;
+    return faltaCCouProjeto(cc, proj);
+  }).length;
+  const creditosSemCCProjeto = credits.filter(c => {
+    const resolvido = c.used || !!c.cliente;
+    if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false;
+    return faltaCCouProjeto(c.centroCusto, c.projeto);
+  }).length;
+  const reportSemCCProjeto = report.filter(r => r.resultado === 'ok' && faltaCCouProjeto(r.centroCusto, r.projeto)).length;
+  const totalCamposObrigatoriosFaltando = debitosSemCCProjeto + creditosSemCCProjeto + reportSemCCProjeto;
+
   document.getElementById('summaryCards').innerHTML = `
     <div class="card">
       <div class="num">${fmtMoney(valorTotal)}</div>
@@ -3669,26 +3689,6 @@ function renderSummary(){
   const debitosPendentesId = debits.filter(d => !d.used && d.identStatus === 'pendente').length;
   const debitosACompletar = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente').length;
   const creditosACompletar = credits.filter(c => !c.used && !c.cliente && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && !isMesmaTitularidade(c.memo)).length;
-
-  // Lançamentos/linhas que JÁ estão identificados/conciliados, mas sem Centro de Custo e/ou
-  // Projeto preenchido — obrigatório pra contabilidade, então conta como pendência mesmo já
-  // tendo fornecedor/cliente identificado.
-  const faltaCCouProjeto = (cc, proj) => !cc || !cc.trim() || !proj || !proj.trim();
-  const debitosSemCCProjeto = debits.filter(d => {
-    const resolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual';
-    if(!resolvido || d.estornado) return false;
-    const r = d.used ? report.find(x => x.matchedTx && x.matchedTx.fitid === d.fitid) : null;
-    const cc = r ? r.centroCusto : d.centroCusto;
-    const proj = r ? r.projeto : d.projeto;
-    return faltaCCouProjeto(cc, proj);
-  }).length;
-  const creditosSemCCProjeto = credits.filter(c => {
-    const resolvido = c.used || !!c.cliente;
-    if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false;
-    return faltaCCouProjeto(c.centroCusto, c.projeto);
-  }).length;
-  const reportSemCCProjeto = report.filter(r => r.resultado === 'ok' && faltaCCouProjeto(r.centroCusto, r.projeto)).length;
-  const totalCamposObrigatoriosFaltando = debitosSemCCProjeto + creditosSemCCProjeto + reportSemCCProjeto;
 
   document.getElementById('cPend').textContent = '(' + (warn+bad+debitosPendentesId) + ')';
   document.getElementById('cOk').textContent = '(' + ok + ')';
