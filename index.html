@@ -3283,7 +3283,7 @@ async function runReconciliation(opts){
     // Transferência entre contas da mesma empresa (mesma titularidade) — também não é receita
     // de cliente, então já vem com fornecedor/centro de custo/projeto institucionais.
     if(isMesmaTitularidade(c.memo)){
-      c.cliente = 'PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)';
+      c.cliente = 'INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
       c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
       c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     }
@@ -3291,7 +3291,7 @@ async function runReconciliation(opts){
   const bankName = (document.getElementById('cfgBankName').value || 'SICOOB').trim().toUpperCase() || 'SICOOB';
   debits.forEach(d => {
     if(isMesmaTitularidade(d.memo)){
-      d.fornecedor = 'PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)';
+      d.fornecedor = 'INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
       d.identStatus = 'auto';
       d.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
       d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
