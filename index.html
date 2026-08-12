@@ -687,6 +687,7 @@ const CENTRO_CUSTO_MASTER_LIST = [
   '1000_Nota fiscal mensal de prestação de serviços',
   'Reembolso',
   '1170 - Pessoas - Plano de Saúde',
+  '2010 - Transferencia entre contas mesma Titularidade',
   '2100 - Deslocamentos - Combustível',
   '2130 - Deslocamentos - Hospedagens',
   '2150 - Deslocamentos - Passagens',
@@ -3279,13 +3280,21 @@ async function runReconciliation(opts){
     if(isResgateAplicacao(c.memo)){
       c.cliente = 'INSTITUTO BRASILEIRO DE GESTAO E PESQUISA';
     }
+    // Transferência entre contas da mesma empresa (mesma titularidade) — também não é receita
+    // de cliente, então já vem com fornecedor/centro de custo/projeto institucionais.
+    if(isMesmaTitularidade(c.memo)){
+      c.cliente = 'PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)';
+      c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+      c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    }
   });
   const bankName = (document.getElementById('cfgBankName').value || 'SICOOB').trim().toUpperCase() || 'SICOOB';
   debits.forEach(d => {
     if(isMesmaTitularidade(d.memo)){
       d.fornecedor = 'PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)';
       d.identStatus = 'auto';
-      d.centroCusto = d.centroCusto || '';
+      d.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     } else if(isParcelaSubscricaoIntegralizacao(d.memo)){
       d.fornecedor = bankName;
       d.identStatus = 'auto';
