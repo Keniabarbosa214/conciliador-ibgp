@@ -1812,29 +1812,30 @@ function deserializeSession(snap){
     ? (snap.ofxRawB64 ? base64ToUint8(snap.ofxRawB64) : null)
     : (snap.ofxRawText || null);
   xlsxRaw = snap.xlsxRawB64 ? base64ToUint8(snap.xlsxRawB64) : null;
+  const ofxMetaSalvo = snap.ofxMeta || {};
   ofxMeta = {
-    saldoFinal: snap.ofxMeta.saldoFinal,
-    dtAsOf: snap.ofxMeta.dtAsOf ? new Date(snap.ofxMeta.dtAsOf) : null,
-    dtStart: snap.ofxMeta.dtStart ? new Date(snap.ofxMeta.dtStart) : null,
-    dtEnd: snap.ofxMeta.dtEnd ? new Date(snap.ofxMeta.dtEnd) : null,
-    bankId: snap.ofxMeta.bankId, branchId: snap.ofxMeta.branchId, acctId: snap.ofxMeta.acctId,
+    saldoFinal: ofxMetaSalvo.saldoFinal ?? null,
+    dtAsOf: ofxMetaSalvo.dtAsOf ? new Date(ofxMetaSalvo.dtAsOf) : null,
+    dtStart: ofxMetaSalvo.dtStart ? new Date(ofxMetaSalvo.dtStart) : null,
+    dtEnd: ofxMetaSalvo.dtEnd ? new Date(ofxMetaSalvo.dtEnd) : null,
+    bankId: ofxMetaSalvo.bankId || '', branchId: ofxMetaSalvo.branchId || '', acctId: ofxMetaSalvo.acctId || '',
   };
-  saldoInicialInformado = snap.saldoInicialInformado;
+  saldoInicialInformado = snap.saldoInicialInformado ?? null;
   futurosTransacoes = (snap.futurosTransacoes||[]).map(f => ({...f, date: f.date ? new Date(f.date) : null}));
-  debits = snap.debits.map(d => ({...d, date: d.date ? new Date(d.date) : null}));
-  credits = snap.credits.map(c => ({...c, date: c.date ? new Date(c.date) : null}));
+  debits = (snap.debits||[]).map(d => ({...d, date: d.date ? new Date(d.date) : null}));
+  credits = (snap.credits||[]).map(c => ({...c, date: c.date ? new Date(c.date) : null}));
   const fitidMap = {};
   debits.forEach(d => fitidMap[d.fitid] = d);
   const creditFitidMap = {};
   credits.forEach(c => creditFitidMap[c.fitid] = c);
-  report = snap.report.map(r => ({
+  report = (snap.report||[]).map(r => ({
     rowIndex: r.rowIndex, raw: r.raw, valor: r.valor,
     pagoEm: r.pagoEm ? new Date(r.pagoEm) : null,
     status: r.status, favorecido: r.favorecido, empresa: r.empresa,
     centroCusto: r.centroCusto, projeto: r.projeto, observacoes: r.observacoes, descricao: r.descricao, idReport: r.idReport,
     idTransacao: r.idTransacao, resultado: r.resultado,
     matchedTx: r.matchedTxFitid ? fitidMap[r.matchedTxFitid] : null,
-    candidates: r.candidateFitids.map(c => ({tx: fitidMap[c.fitid], dateDiff:c.dateDiff, nameScore:c.nameScore})).filter(c=>c.tx),
+    candidates: (r.candidateFitids||[]).map(c => ({tx: fitidMap[c.fitid], dateDiff:c.dateDiff, nameScore:c.nameScore})).filter(c=>c.tx),
     manualConfirm: r.manualConfirm, excludedReason: r.excludedReason,
     matchedById: r.matchedById || false, idValorDivergente: r.idValorDivergente || false
   }));
@@ -2259,14 +2260,36 @@ async function refreshSavedSessionsList(){
   listEl.querySelectorAll('.btn-resume').forEach(btn=>{
     btn.addEventListener('click', async (e)=>{
       const key = e.target.dataset.key;
-      const snap = await storageGet(key);
-      if(!snap) return;
+      e.target.textContent = 'Abrindo...';
+      e.target.disabled = true;
+      let snap;
+      try{
+        snap = await storageGet(key);
+      }catch(err){
+        alert('Erro ao buscar essa conciliação: ' + err.message);
+        e.target.textContent = 'Continuar';
+        e.target.disabled = false;
+        return;
+      }
+      if(!snap){
+        alert('⚠️ Não consegui encontrar os dados dessa conciliação salva. Isso pode acontecer se a conexão com a nuvem estiver instável agora — tenta de novo em alguns segundos, ou recarrega a página (Ctrl+F5) antes de tentar de novo.');
+        e.target.textContent = 'Continuar';
+        e.target.disabled = false;
+        return;
+      }
       currentSessionKey = key;
-      deserializeSession(snap);
-      renderResults();
-      document.getElementById('uploadStage').classList.remove('show');
-      document.getElementById('resultsStage').classList.add('show');
-      document.getElementById('btnTrocarArquivos').style.display = 'inline-block';
+      try{
+        deserializeSession(snap);
+        renderResults();
+        document.getElementById('uploadStage').classList.remove('show');
+        document.getElementById('resultsStage').classList.add('show');
+        document.getElementById('btnTrocarArquivos').style.display = 'inline-block';
+      }catch(err){
+        console.error('Erro ao abrir conciliação salva:', err);
+        alert('⚠️ Essa conciliação salva tem um formato de dados que o sistema não conseguiu abrir (provavelmente foi salva numa versão bem antiga do sistema). Detalhe técnico: ' + err.message + '\n\nSe precisar desses dados, me avise que posso ajudar a recuperar manualmente.');
+        e.target.textContent = 'Continuar';
+        e.target.disabled = false;
+      }
     });
   });
   listEl.querySelectorAll('.btn-delete').forEach(btn=>{
