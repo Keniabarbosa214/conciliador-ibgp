@@ -3690,7 +3690,7 @@ function renderSummary(){
     </div>
   `;
 
-  const debitosPendentesId = debits.filter(d => !d.used && d.identStatus === 'pendente').length;
+  const debitosPendentesId = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente').length;
   const debitosACompletar = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente').length;
   const creditosACompletar = credits.filter(c => !c.used && !c.cliente && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && !isMesmaTitularidade(c.memo)).length;
 
