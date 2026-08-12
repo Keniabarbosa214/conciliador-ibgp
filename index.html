@@ -1298,7 +1298,7 @@ function gerarFitidReparado(dateVal, amount, memo, contadorMap){
   const chave = chaveConteudoTx(dateVal, amount, memo);
   const ocorrencia = (contadorMap.get(chave) || 0) + 1;
   contadorMap.set(chave, ocorrencia);
-  return ('rep-' + chave).replace(/[^a-z0-9|]/gi,'') + '-' + ocorrencia;
+  return ('x-' + chave).replace(/[^a-z0-9|]/gi,'') + '-' + ocorrencia;
 }
 
 async function repararIdentificadoresSalvos(){
@@ -2688,17 +2688,21 @@ function extractPaymentId(text){
 // duplicatas genuínas (dois lançamentos idênticos no mesmo dia).
 function gerarFitidEstavel(prefixo, dataStr, num, fullMemo, documento, contadorMap){
   // Quando o memo tem um número de pagamento (ex: "Pagamento IBGP #945"), esse número já é
-  // genuinamente único — usa ele direto, sem contador de ocorrência, e SEM o prefixo do formato
-  // do arquivo (xlsn/xls/ofx) — esse número já identifica o pagamento sozinho, independente de
-  // qual formato de arquivo foi usado pra ler ele num dia ou outro.
+  // genuinamente único — usa ele direto, sem contador de ocorrência.
   const idPagamento = extractPaymentId(fullMemo);
   if(idPagamento){
     return ('idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
   }
-  const chaveBase = prefixo + '|' + dataStr + '|' + Math.round(num*100) + '|' + (documento||'') + '|' + slugify(fullMemo).slice(0,60);
-  const ocorrencia = (contadorMap.get(chaveBase) || 0) + 1;
-  contadorMap.set(chaveBase, ocorrencia);
-  return chaveBase.replace(/[^a-z0-9|]/gi,'') + '-' + ocorrencia;
+  // Pra tudo o mais, usa EXATAMENTE a mesma lógica da ferramenta de reparo (gerarFitidReparado):
+  // só data + valor + memo, SEM o "documento" da coluna do arquivo (que não é garantidamente
+  // estável entre exportações — pode ser um número sequencial do próprio arquivo, não do banco)
+  // e SEM o prefixo do formato (xlsn/xls) — assim, processar um dia pela primeira vez e reparar
+  // uma sessão antiga desse MESMO dia sempre chegam no mesmo identificador.
+  const dataParsed = parseDateBR(dataStr);
+  const chave = chaveConteudoTx(dataParsed, num, fullMemo);
+  const ocorrencia = (contadorMap.get(chave) || 0) + 1;
+  contadorMap.set(chave, ocorrencia);
+  return ('x-' + chave).replace(/[^a-z0-9|]/gi,'') + '-' + ocorrencia;
 }
 
 // Chave baseada só no conteúdo (data + valor + memo) — serve de PONTE de compatibilidade: uma
