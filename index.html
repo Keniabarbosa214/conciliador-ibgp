@@ -2567,6 +2567,16 @@ function extractPaymentId(text){
 // foi confirmado antes, mesmo sendo o mesmo pagamento. Usa um contador só pra desempatar
 // duplicatas genuínas (dois lançamentos idênticos no mesmo dia).
 function gerarFitidEstavel(prefixo, dataStr, num, fullMemo, documento, contadorMap){
+  // Quando o memo tem um número de pagamento (ex: "Pagamento IBGP #945"), esse número já é
+  // genuinamente único — usa ele direto, sem contador de ocorrência. O contador de ocorrência
+  // (usado como último recurso, abaixo) é instável entre arquivos diferentes: o mesmo pagamento
+  // pode "ser o 1º" num arquivo que cobre poucos dias e "ser o 3º" num arquivo que cobre mais
+  // dias (por ter mais lançamentos parecidos antes dele) — o que gerava fitid diferente pro
+  // MESMO pagamento real, dependendo de qual arquivo foi usado pra processar.
+  const idPagamento = extractPaymentId(fullMemo);
+  if(idPagamento){
+    return (prefixo + '-idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
+  }
   const chaveBase = prefixo + '|' + dataStr + '|' + Math.round(num*100) + '|' + (documento||'') + '|' + slugify(fullMemo).slice(0,60);
   const ocorrencia = (contadorMap.get(chaveBase) || 0) + 1;
   contadorMap.set(chaveBase, ocorrencia);
