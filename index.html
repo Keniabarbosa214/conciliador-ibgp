@@ -544,6 +544,17 @@
       </div>
     </div>
 
+    <div class="busca-global-bar" style="background:#FDEEEE;border:1.5px solid var(--bad);">
+      <span class="busca-global-label" style="color:var(--bad);">🔧 Reparo — corrige identificadores instáveis nas conciliações JÁ SALVAS</span>
+      <p style="font-size:12px;color:var(--ink);margin:6px 0;">
+        Corrige um problema técnico que fazia o mesmo pagamento (quando o memo tem "#número") aparecer como
+        duas coisas diferentes em conciliações salvas em dias distintos. <b>Não precisa reanexar nenhum arquivo</b> —
+        atua direto nas conciliações que já estão salvas. Roda uma vez, é seguro repetir.
+      </p>
+      <button id="btnRepararIdentificadores" class="btn-aplicar-periodo" style="background:var(--bad);">Reparar conciliações salvas agora</button>
+      <div id="repararResultado" style="margin-top:8px;font-size:12.5px;"></div>
+    </div>
+
     <div id="savedSessions" class="saved-sessions"></div>
 
     <div class="upload-grid">
@@ -1275,6 +1286,75 @@ async function excluirContaCadastrada(key){
   renderContaUploadSelector();
 }
 window.excluirContaCadastrada = excluirContaCadastrada;
+
+// Gera o mesmo tipo de identificador estável usado no processamento normal, mas aplicável
+// diretamente em cima de dados JÁ SALVOS (sem precisar do arquivo original) — usa o número de
+// pagamento (#NNN) quando existe, senão o conteúdo (data+valor+memo) com um contador SÓ pra
+// desempatar duplicatas genuínas dentro da MESMA sessão.
+function gerarFitidReparado(dateVal, amount, memo, contadorMap){
+  const idPagamento = extractPaymentId(memo);
+  if(idPagamento) return ('idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
+  const chave = chaveConteudoTx(dateVal, amount, memo);
+  const ocorrencia = (contadorMap.get(chave) || 0) + 1;
+  contadorMap.set(chave, ocorrencia);
+  return ('rep-' + chave).replace(/[^a-z0-9|]/gi,'') + '-' + ocorrencia;
+}
+
+async function repararIdentificadoresSalvos(){
+  const resultEl = document.getElementById('repararResultado');
+  const btn = document.getElementById('btnRepararIdentificadores');
+  btn.disabled = true;
+  resultEl.innerHTML = 'Lendo todas as conciliações salvas...';
+
+  const keys = await storageList('conc:');
+  if(!keys || keys.length === 0){
+    resultEl.innerHTML = 'Nenhuma conciliação salva encontrada.';
+    btn.disabled = false;
+    return;
+  }
+
+  let sessõesAlteradas = 0, fitidsTrocados = 0;
+  for(const key of keys){
+    const snap = await storageGet(key);
+    if(!snap) continue;
+    const contadorMap = new Map();
+    const mapaAntigoParaNovo = {};
+    let mudouAlgo = false;
+
+    (snap.debits||[]).forEach(d => {
+      const novoFitid = gerarFitidReparado(d.date, d.amount, d.memo, contadorMap);
+      if(novoFitid !== d.fitid){ mapaAntigoParaNovo[d.fitid] = novoFitid; d.fitid = novoFitid; mudouAlgo = true; fitidsTrocados++; }
+    });
+    (snap.credits||[]).forEach(c => {
+      const novoFitid = gerarFitidReparado(c.date, c.amount, c.memo, contadorMap);
+      if(novoFitid !== c.fitid){ mapaAntigoParaNovo[c.fitid] = novoFitid; c.fitid = novoFitid; mudouAlgo = true; fitidsTrocados++; }
+    });
+    // Atualiza as referências de vínculo (relatório → débito, nota fiscal → crédito) pra
+    // continuarem apontando pro lançamento certo depois da troca de identificador.
+    (snap.report||[]).forEach(r => {
+      if(r.matchedTxFitid && mapaAntigoParaNovo[r.matchedTxFitid]){
+        r.matchedTxFitid = mapaAntigoParaNovo[r.matchedTxFitid];
+        mudouAlgo = true;
+      }
+    });
+    (snap.reportReceber||[]).forEach(n => {
+      if(n.matchedTxFitid && mapaAntigoParaNovo[n.matchedTxFitid]){
+        n.matchedTxFitid = mapaAntigoParaNovo[n.matchedTxFitid];
+        mudouAlgo = true;
+      }
+    });
+
+    if(mudouAlgo){
+      await storageSet(key, snap);
+      sessõesAlteradas++;
+    }
+    resultEl.innerHTML = `Reparando... ${sessõesAlteradas} sessão(ões) já corrigida(s) até agora.`;
+  }
+
+  resultEl.innerHTML = `✅ Pronto! ${sessõesAlteradas} de ${keys.length} conciliação(ões) salva(s) foram corrigidas (${fitidsTrocados} identificador(es) trocado(s) no total). Agora gere a "Visão consolidada" de novo pra ver o resultado.`;
+  btn.disabled = false;
+}
+document.getElementById('btnRepararIdentificadores').addEventListener('click', repararIdentificadoresSalvos);
 
 let debits = [];          // parsed bank DEBIT transactions
 let credits = [];         // parsed bank CREDIT transactions (kept for reference)
@@ -2568,14 +2648,12 @@ function extractPaymentId(text){
 // duplicatas genuínas (dois lançamentos idênticos no mesmo dia).
 function gerarFitidEstavel(prefixo, dataStr, num, fullMemo, documento, contadorMap){
   // Quando o memo tem um número de pagamento (ex: "Pagamento IBGP #945"), esse número já é
-  // genuinamente único — usa ele direto, sem contador de ocorrência. O contador de ocorrência
-  // (usado como último recurso, abaixo) é instável entre arquivos diferentes: o mesmo pagamento
-  // pode "ser o 1º" num arquivo que cobre poucos dias e "ser o 3º" num arquivo que cobre mais
-  // dias (por ter mais lançamentos parecidos antes dele) — o que gerava fitid diferente pro
-  // MESMO pagamento real, dependendo de qual arquivo foi usado pra processar.
+  // genuinamente único — usa ele direto, sem contador de ocorrência, e SEM o prefixo do formato
+  // do arquivo (xlsn/xls/ofx) — esse número já identifica o pagamento sozinho, independente de
+  // qual formato de arquivo foi usado pra ler ele num dia ou outro.
   const idPagamento = extractPaymentId(fullMemo);
   if(idPagamento){
-    return (prefixo + '-idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
+    return ('idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
   }
   const chaveBase = prefixo + '|' + dataStr + '|' + Math.round(num*100) + '|' + (documento||'') + '|' + slugify(fullMemo).slice(0,60);
   const ocorrencia = (contadorMap.get(chaveBase) || 0) + 1;
