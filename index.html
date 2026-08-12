@@ -1309,6 +1309,16 @@ window.excluirContaCadastrada = excluirContaCadastrada;
 // diretamente em cima de dados JÁ SALVOS (sem precisar do arquivo original) — usa o número de
 // pagamento (#NNN) quando existe, senão o conteúdo (data+valor+memo) com um contador SÓ pra
 // desempatar duplicatas genuínas dentro da MESMA sessão.
+// Converte todo campo de TEXTO de uma linha pra maiúsculo, na hora de exportar — números e
+// valores continuam exatamente como estão (só texto é afetado).
+function linhaEmMaiusculo(obj){
+  const out = {};
+  for(const k in obj){
+    out[k] = typeof obj[k] === 'string' ? obj[k].toUpperCase() : obj[k];
+  }
+  return out;
+}
+
 function gerarFitidReparado(dateVal, amount, memo, contadorMap){
   const idPagamento = extractPaymentId(memo);
   if(idPagamento) return ('idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
@@ -2278,7 +2288,7 @@ function exportarFechamentoMensal(){
   const wsResumoPeriodo = XLSX.utils.json_to_sheet(linhasResumoPeriodo);
   wsResumoPeriodo['!cols'] = [{wch:36},{wch:22}];
 
-  const wsUnica = XLSX.utils.json_to_sheet(linhas);
+  const wsUnica = XLSX.utils.json_to_sheet(linhas.map(linhaEmMaiusculo));
   wsUnica['!cols'] = [{wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:26},{wch:30},{wch:45}];
   const wbOut = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wbOut, wsResumoPeriodo, 'Resumo');
@@ -2294,7 +2304,7 @@ function exportarFechamentoMensal(){
       'SITUAÇÃO': r.resultado === 'warn' ? 'Sugestão não confirmada' : 'Sem correspondência no extrato'
     }));
     pendentesRows.push({ 'ID':'','EMPRESA':'','CENTRO DE CUSTO':'','PROJETO':'','FORNECEDOR':'TOTAL EM ABERTO','VALOR (R$)':totalPendente,'SITUAÇÃO':'' });
-    const wsPendentes = XLSX.utils.json_to_sheet(pendentesRows);
+    const wsPendentes = XLSX.utils.json_to_sheet(pendentesRows.map(linhaEmMaiusculo));
     wsPendentes['!cols'] = [{wch:8},{wch:10},{wch:32},{wch:32},{wch:32},{wch:13},{wch:24}];
     XLSX.utils.book_append_sheet(wbOut, wsPendentes, 'Pagamentos em Aberto');
   }
@@ -2304,7 +2314,7 @@ function exportarFechamentoMensal(){
       'Nº NF': n.numeroNF, 'CLIENTE': n.nomeCliente, 'CNPJ': n.cnpjCliente,
       'VALOR LÍQUIDO (R$)': n.valorLiquido, 'STATUS': 'Pendente de recebimento'
     }));
-    const wsNotas = XLSX.utils.json_to_sheet(notasRows);
+    const wsNotas = XLSX.utils.json_to_sheet(notasRows.map(linhaEmMaiusculo));
     wsNotas['!cols'] = [{wch:10},{wch:32},{wch:20},{wch:16},{wch:20}];
     XLSX.utils.book_append_sheet(wbOut, wsNotas, 'Notas Fiscais Pendentes');
   }
@@ -4862,7 +4872,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   const wsResumo = XLSX.utils.json_to_sheet(linhasResumo);
   wsResumo['!cols'] = [{wch:36},{wch:18}];
 
-  const wsUnica = XLSX.utils.json_to_sheet(linhasUnificadas);
+  const wsUnica = XLSX.utils.json_to_sheet(linhasUnificadas.map(linhaEmMaiusculo));
   wsUnica['!cols'] = [
     {wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:20},{wch:26},{wch:30},{wch:45}
   ];
@@ -4900,7 +4910,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
       'ID': '', 'EMPRESA': '', 'CENTRO DE CUSTO': '', 'PROJETO': '', 'FORNECEDOR': 'TOTAL EM ABERTO',
       'VALOR (R$)': totalPendente, 'PAGO EM (PREVISTO)': '', 'SITUAÇÃO': '', 'MOTIVO / OBSERVAÇÃO': ''
     });
-    const wsPendentes = XLSX.utils.json_to_sheet(pendentesRows);
+    const wsPendentes = XLSX.utils.json_to_sheet(pendentesRows.map(linhaEmMaiusculo));
     wsPendentes['!cols'] = [{wch:8},{wch:10},{wch:32},{wch:32},{wch:32},{wch:13},{wch:15},{wch:34},{wch:55}];
     XLSX.utils.book_append_sheet(wbOut, wsPendentes, 'Pagamentos em Aberto');
   }
@@ -4914,7 +4924,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
       'EMITIDA EM': fmtDateISOtoBR(n.dataEmissao), 'STATUS': 'Pendente de recebimento'
     }));
     if(notasRows.length > 0){
-      const wsNotas = XLSX.utils.json_to_sheet(notasRows);
+      const wsNotas = XLSX.utils.json_to_sheet(notasRows.map(linhaEmMaiusculo));
       wsNotas['!cols'] = [{wch:10},{wch:32},{wch:20},{wch:16},{wch:16},{wch:13},{wch:20}];
       XLSX.utils.book_append_sheet(wbOut, wsNotas, 'Notas Fiscais Pendentes');
     }
