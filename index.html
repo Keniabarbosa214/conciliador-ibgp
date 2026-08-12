@@ -572,6 +572,17 @@
       <div id="preencherProjetoResultado" style="margin-top:8px;font-size:12.5px;"></div>
     </div>
 
+    <div class="busca-global-bar" style="background:#E4EFE6;border:1.5px solid var(--ok);">
+      <span class="busca-global-label" style="color:#1A5C3E;">🔧 Corrigir fornecedor das transferências "mesma titularidade" (retroativo)</span>
+      <p style="font-size:12px;color:var(--ink);margin:6px 0;">
+        Troca, em <b>todas</b> as conciliações já salvas, o fornecedor/cliente das transferências mesma titularidade
+        de <code>"PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)"</code> para
+        <code>"INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP"</code>. Não precisa reanexar nenhum arquivo.
+      </p>
+      <button id="btnCorrigirFornecedorMesmaTit" class="btn-aplicar-periodo" style="background:var(--ok);">Corrigir fornecedor agora</button>
+      <div id="corrigirFornecedorResultado" style="margin-top:8px;font-size:12.5px;"></div>
+    </div>
+
     <div id="savedSessions" class="saved-sessions"></div>
 
     <div class="upload-grid">
@@ -1448,6 +1459,59 @@ async function preencherProjetoEmBranco(){
   btn.disabled = false;
 }
 document.getElementById('btnPreencherProjeto').addEventListener('click', preencherProjetoEmBranco);
+
+const FORNECEDOR_MESMA_TIT_ANTIGO = 'PAGAMENTO MESMA TITULARIDADE (CNPJ 13.761.170/0001-30)';
+const FORNECEDOR_MESMA_TIT_NOVO = 'INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+
+async function corrigirFornecedorMesmaTitularidade(){
+  const resultEl = document.getElementById('corrigirFornecedorResultado');
+  const btn = document.getElementById('btnCorrigirFornecedorMesmaTit');
+  btn.disabled = true;
+  resultEl.innerHTML = 'Lendo todas as conciliações salvas...';
+
+  const keys = await storageList('conc:');
+  if(!keys || keys.length === 0){
+    resultEl.innerHTML = 'Nenhuma conciliação salva encontrada.';
+    btn.disabled = false;
+    return;
+  }
+
+  let sessõesAlteradas = 0, camposCorrigidos = 0;
+  for(const key of keys){
+    const snap = await storageGet(key);
+    if(!snap) continue;
+    let mudouAlgo = false;
+
+    (snap.debits||[]).forEach(d => {
+      if(d.fornecedor === FORNECEDOR_MESMA_TIT_ANTIGO){
+        d.fornecedor = FORNECEDOR_MESMA_TIT_NOVO;
+        mudouAlgo = true; camposCorrigidos++;
+      }
+    });
+    (snap.credits||[]).forEach(c => {
+      if(c.cliente === FORNECEDOR_MESMA_TIT_ANTIGO){
+        c.cliente = FORNECEDOR_MESMA_TIT_NOVO;
+        mudouAlgo = true; camposCorrigidos++;
+      }
+    });
+    (snap.report||[]).forEach(r => {
+      if(r.favorecido === FORNECEDOR_MESMA_TIT_ANTIGO){
+        r.favorecido = FORNECEDOR_MESMA_TIT_NOVO;
+        mudouAlgo = true; camposCorrigidos++;
+      }
+    });
+
+    if(mudouAlgo){
+      await storageSet(key, snap);
+      sessõesAlteradas++;
+    }
+    resultEl.innerHTML = `Corrigindo... ${sessõesAlteradas} sessão(ões) alterada(s) até agora.`;
+  }
+
+  resultEl.innerHTML = `✅ Pronto! ${camposCorrigidos} campo(s) corrigido(s) em ${sessõesAlteradas} de ${keys.length} conciliação(ões) salva(s).`;
+  btn.disabled = false;
+}
+document.getElementById('btnCorrigirFornecedorMesmaTit').addEventListener('click', corrigirFornecedorMesmaTitularidade);
 
 let debits = [];          // parsed bank DEBIT transactions
 let credits = [];         // parsed bank CREDIT transactions (kept for reference)
