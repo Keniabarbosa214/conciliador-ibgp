@@ -2530,11 +2530,13 @@ const PADROES_SUGESTAO = [
 
 // Aplica os padrões acima no memo (bruto e normalizado) e devolve a melhor sugestão encontrada,
 // ou null se nada bateu — nesse caso os campos continuam em branco pra digitar manualmente.
+// O projeto sugerido é sempre o institucional (IBGP) — esses padrões são despesas gerais da
+// empresa (transporte, alimentação, contas), não vinculadas a um contrato/município específico.
 function sugerirClassificacao(memoOriginal){
   const n = normalize(memoOriginal);
   for(const p of PADROES_SUGESTAO){
     if(p.re.test(n)){
-      return { fornecedor: p.fornecedor(n, memoOriginal), centroCusto: p.cc };
+      return { fornecedor: p.fornecedor(n, memoOriginal), centroCusto: p.cc, projeto: '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP' };
     }
   }
   return null;
@@ -3616,11 +3618,35 @@ function renderSummary(){
       <div class="num">${total}</div>
       <div class="lbl">Linhas no relatório</div>
     </div>
+    <div class="card ${totalCamposObrigatoriosFaltando>0?'bad':'ok'}">
+      <div class="num">${totalCamposObrigatoriosFaltando}</div>
+      <div class="lbl">⚠️ Identificados sem Centro de Custo/Projeto${totalCamposObrigatoriosFaltando>0 ? '<br><span style="font-weight:400;font-size:10.5px;">obrigatórios — preencha antes de considerar fechado</span>' : ''}</div>
+    </div>
   `;
 
   const debitosPendentesId = debits.filter(d => !d.used && d.identStatus === 'pendente').length;
   const debitosACompletar = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente').length;
   const creditosACompletar = credits.filter(c => !c.used && !c.cliente && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && !isMesmaTitularidade(c.memo)).length;
+
+  // Lançamentos/linhas que JÁ estão identificados/conciliados, mas sem Centro de Custo e/ou
+  // Projeto preenchido — obrigatório pra contabilidade, então conta como pendência mesmo já
+  // tendo fornecedor/cliente identificado.
+  const faltaCCouProjeto = (cc, proj) => !cc || !cc.trim() || !proj || !proj.trim();
+  const debitosSemCCProjeto = debits.filter(d => {
+    const resolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual';
+    if(!resolvido || d.estornado) return false;
+    const r = d.used ? report.find(x => x.matchedTx && x.matchedTx.fitid === d.fitid) : null;
+    const cc = r ? r.centroCusto : d.centroCusto;
+    const proj = r ? r.projeto : d.projeto;
+    return faltaCCouProjeto(cc, proj);
+  }).length;
+  const creditosSemCCProjeto = credits.filter(c => {
+    const resolvido = c.used || !!c.cliente;
+    if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false;
+    return faltaCCouProjeto(c.centroCusto, c.projeto);
+  }).length;
+  const reportSemCCProjeto = report.filter(r => r.resultado === 'ok' && faltaCCouProjeto(r.centroCusto, r.projeto)).length;
+  const totalCamposObrigatoriosFaltando = debitosSemCCProjeto + creditosSemCCProjeto + reportSemCCProjeto;
 
   document.getElementById('cPend').textContent = '(' + (warn+bad+debitosPendentesId) + ')';
   document.getElementById('cOk').textContent = '(' + ok + ')';
@@ -3631,10 +3657,10 @@ function renderSummary(){
 
   renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo);
   renderLegend();
-  renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo, linhasEmAberto.length, valorEmAberto);
+  renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo, linhasEmAberto.length, valorEmAberto, totalCamposObrigatoriosFaltando);
 }
 
-function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo, qtdEmAberto, valorEmAberto){
+function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, totalDebitosPeriodo, totalCreditosPeriodo, qtdEmAberto, valorEmAberto, totalCamposObrigatoriosFaltando){
   const panel = document.getElementById('fechamentoPanel');
   if(!panel) return;
   const pendencias = [];
@@ -3642,6 +3668,7 @@ function renderFechamento(warn, bad, debitosPendentesId, creditosACompletar, tot
   if(bad > 0) pendencias.push(`${bad} linha(s) do relatório sem correspondência no extrato`);
   if(debitosPendentesId > 0) pendencias.push(`${debitosPendentesId} pagamento(s) do extrato ainda sem fornecedor identificado`);
   if(creditosACompletar > 0) pendencias.push(`${creditosACompletar} recebimento(s) do extrato ainda sem cliente identificado`);
+  if(totalCamposObrigatoriosFaltando > 0) pendencias.push(`${totalCamposObrigatoriosFaltando} lançamento(s) já identificado(s) mas SEM Centro de Custo e/ou Projeto — esses dois campos são obrigatórios`);
 
   let saldoOk = false;
   if(saldoInicialInformado !== null && !isNaN(saldoInicialInformado) && ofxMeta.saldoFinal !== null){
@@ -4246,6 +4273,10 @@ function marcarDebitoIdentificado(fitid){
   if(!d.fornecedor || !d.fornecedor.trim()){
     if(!confirm('O campo de fornecedor está vazio. Marcar como identificado mesmo assim?')) return;
   }
+  if(!d.centroCusto || !d.centroCusto.trim() || !d.projeto || !d.projeto.trim()){
+    alert('⚠️ Centro de Custo e Projeto são obrigatórios antes de marcar como identificado. Preencha os dois campos dessa linha e tente de novo.');
+    return;
+  }
   d.identStatus = 'manual';
   renderResults();
   persistCurrentSession();
@@ -4535,7 +4566,7 @@ function renderCriarLancamento(fitid, tipo){
       ${avisoSugestao}
       <input type="text" class="edit-inline" id="criarForn-${fitid}" placeholder="Nome do fornecedor" value="${sugestao ? sugestao.fornecedor.replace(/"/g,'&quot;') : ''}" style="margin-bottom:4px;">
       ${buildAutocompleteInput('centroCusto', sugestao ? sugestao.centroCusto : '', '— Centro de custo —', `id="criarCC-${fitid}"`)}
-      ${buildAutocompleteInput('projeto', '', '— Projeto —', `id="criarProj-${fitid}"`)}
+      ${buildAutocompleteInput('projeto', sugestao ? sugestao.projeto : '', '— Projeto —', `id="criarProj-${fitid}"`)}
       <button class="btn-cloud" style="padding:6px 12px;font-size:12px;margin-top:4px;" onclick="confirmarCriarLancamentoSaida('${fitid}')">✓ Identificar sem vincular ao relatório</button>
     `;
   } else {
@@ -4544,7 +4575,7 @@ function renderCriarLancamento(fitid, tipo){
       <input type="text" class="edit-inline" id="criarCliente-${fitid}" placeholder="Nome do cliente" value="${sugestao ? sugestao.fornecedor.replace(/"/g,'&quot;') : ''}" style="margin-bottom:4px;">
       <input type="text" class="edit-inline" id="criarNF-${fitid}" placeholder="Nº NF (opcional)" style="margin-bottom:4px;max-width:120px;">
       ${buildAutocompleteInput('centroCusto', sugestao ? sugestao.centroCusto : (document.getElementById('cfgCentroCustoReceber').value||''), '— Centro de custo —', `id="criarCCReceb-${fitid}"`)}
-      ${buildAutocompleteInput('projeto', '', '— Projeto —', `id="criarProjReceb-${fitid}"`)}
+      ${buildAutocompleteInput('projeto', sugestao ? sugestao.projeto : '', '— Projeto —', `id="criarProjReceb-${fitid}"`)}
       <button class="btn-cloud" style="padding:6px 12px;font-size:12px;margin-top:4px;" onclick="confirmarCriarLancamentoEntrada('${fitid}')">✓ Identificar sem vincular a nota fiscal</button>
     `;
   }
@@ -4557,6 +4588,7 @@ function confirmarCriarLancamentoSaida(fitid){
   const centroCusto = document.getElementById('criarCC-'+fitid).value;
   const projeto = document.getElementById('criarProj-'+fitid).value;
   if(!fornecedor){ alert('Digite o nome do fornecedor antes de confirmar.'); return; }
+  if(!centroCusto || !projeto){ alert('⚠️ Centro de Custo e Projeto são obrigatórios. Escolha os dois antes de confirmar.'); return; }
   d.fornecedor = fornecedor;
   d.centroCusto = centroCusto;
   d.projeto = projeto;
@@ -4573,6 +4605,7 @@ function confirmarCriarLancamentoEntrada(fitid){
   const centroCusto = document.getElementById('criarCCReceb-'+fitid).value;
   const projeto = document.getElementById('criarProjReceb-'+fitid).value;
   if(!cliente){ alert('Digite o nome do cliente antes de confirmar.'); return; }
+  if(!centroCusto || !projeto){ alert('⚠️ Centro de Custo e Projeto são obrigatórios. Escolha os dois antes de confirmar.'); return; }
   c.cliente = cliente;
   c.nf = nf;
   c.centroCusto = centroCusto;
@@ -4594,6 +4627,7 @@ function confirmarSugestaoRapida(fitid, tipo){
     if(!sugestao) return;
     d.fornecedor = sugestao.fornecedor;
     d.centroCusto = sugestao.centroCusto;
+    d.projeto = sugestao.projeto;
     d.identStatus = 'manual';
   } else {
     const c = credits.find(x => x.fitid === fitid);
@@ -4602,6 +4636,7 @@ function confirmarSugestaoRapida(fitid, tipo){
     if(!sugestao) return;
     c.cliente = sugestao.fornecedor;
     c.centroCusto = sugestao.centroCusto;
+    c.projeto = sugestao.projeto;
   }
   renderResults();
   persistCurrentSession();
