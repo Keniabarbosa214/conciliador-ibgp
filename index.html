@@ -4069,16 +4069,22 @@ function renderResults(){
         if(t.used){
           const rMatched = report.find(x => x.matchedTx === t);
           situacaoHtml = '<span class="pill ok">✅ Conciliado</span>';
-          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="report" value="${((rMatched&&rMatched.favorecido)||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">`;
+          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="report" value="${((rMatched&&rMatched.favorecido)||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">
+            ${buildAutocompleteInput('centroCusto', rMatched?rMatched.centroCusto:'', '— Centro de custo —', `data-fitid="${rowKey}" data-modo="report" data-campo="cc"`)}
+            ${buildAutocompleteInput('projeto', rMatched?rMatched.projeto:'', '— Projeto —', `data-fitid="${rowKey}" data-modo="report" data-campo="proj"`)}`;
         } else if(t.estornado){
           situacaoHtml = '<span class="pill warn">🔄 Estornado</span>';
           acaoHtml = '<span style="font-size:11.5px;color:var(--ink-soft);">Pagamento revertido, não precisa de ação</span>';
         } else if(t.identStatus === 'auto'){
           situacaoHtml = '<span class="pill ok">✅ Identificado (banco)</span>';
-          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="debito" value="${(t.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">`;
+          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="debito" value="${(t.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">
+            ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="debito" data-campo="cc"`)}
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="debito" data-campo="proj"`)}`;
         } else if(t.identStatus === 'manual'){
           situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
-          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="debito" value="${(t.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">`;
+          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="debito" value="${(t.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">
+            ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="debito" data-campo="cc"`)}
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="debito" data-campo="proj"`)}`;
         } else {
           situacaoHtml = '<span class="pill bad">🔧 A conciliar</span>';
           acaoHtml = null;
@@ -4086,13 +4092,17 @@ function renderResults(){
       } else {
         if(t.used){
           situacaoHtml = '<span class="pill ok">✅ Conciliado</span>';
-          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}`;
+          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}
+            ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}`;
         } else if(isResgateAplicacao(t.memo) || isDevolucao(t.memo) || isMesmaTitularidade(t.memo)){
           situacaoHtml = '<span class="pill warn">🔄 Movimento interno</span>';
           acaoHtml = '<span style="font-size:11.5px;color:var(--ink-soft);">'+(isMesmaTitularidade(t.memo) ? 'Transferência mesma titularidade — não é receita nova' : 'Resgate/devolução — não é receita nova')+'</span>';
         } else if(t.cliente){
           situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
-          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}`;
+          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}
+            ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}`;
         } else {
           situacaoHtml = '<span class="pill bad">🔧 A conciliar</span>';
           acaoHtml = null;
@@ -4150,6 +4160,40 @@ function renderResults(){
         } else if(modo === 'credito'){
           const c = credits.find(x => x.fitid === fitid);
           if(c) c.cliente = e.target.value;
+        }
+        persistCurrentSession();
+      });
+    });
+    wrap.querySelectorAll('.cc-ac-input[data-campo="cc"]').forEach(sel => {
+      sel.addEventListener('ccselect', (e) => {
+        const fitid = e.target.dataset.fitid;
+        const modo = e.target.dataset.modo;
+        if(modo === 'report'){
+          const r = report.find(x => x.matchedTx && x.matchedTx.fitid === fitid);
+          if(r) r.centroCusto = e.target.value;
+        } else if(modo === 'debito'){
+          const d = debits.find(x => x.fitid === fitid);
+          if(d) d.centroCusto = e.target.value;
+        } else if(modo === 'credito'){
+          const c = credits.find(x => x.fitid === fitid);
+          if(c) c.centroCusto = e.target.value;
+        }
+        persistCurrentSession();
+      });
+    });
+    wrap.querySelectorAll('.cc-ac-input[data-campo="proj"]').forEach(sel => {
+      sel.addEventListener('ccselect', (e) => {
+        const fitid = e.target.dataset.fitid;
+        const modo = e.target.dataset.modo;
+        if(modo === 'report'){
+          const r = report.find(x => x.matchedTx && x.matchedTx.fitid === fitid);
+          if(r) r.projeto = e.target.value;
+        } else if(modo === 'debito'){
+          const d = debits.find(x => x.fitid === fitid);
+          if(d) d.projeto = e.target.value;
+        } else if(modo === 'credito'){
+          const c = credits.find(x => x.fitid === fitid);
+          if(c) c.projeto = e.target.value;
         }
         persistCurrentSession();
       });
