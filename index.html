@@ -2183,9 +2183,23 @@ function exportarFechamentoMensal(){
   });
   linhas.sort((a,b) => a['DATA'].split('/').reverse().join('-').localeCompare(b['DATA'].split('/').reverse().join('-')));
 
+  const totalEntradasPeriodo = linhas.filter(l=>l['TIPO']==='Entrada').reduce((s,l)=>s+l['VALOR (R$)'],0);
+  const totalSaidasPeriodo = linhas.filter(l=>l['TIPO']==='Saída').reduce((s,l)=>s+l['VALOR (R$)'],0);
+  const saldoPeriodoConsolidado = totalEntradasPeriodo - totalSaidasPeriodo;
+  const linhasResumoPeriodo = [
+    { 'RESUMO DO PERÍODO': 'Conta', 'VALOR': contaLabelUsada },
+    { 'RESUMO DO PERÍODO': 'Período', 'VALOR': tituloPeriodo },
+    { 'RESUMO DO PERÍODO': 'Total de entradas (R$)', 'VALOR': totalEntradasPeriodo },
+    { 'RESUMO DO PERÍODO': 'Total de saídas (R$)', 'VALOR': totalSaidasPeriodo },
+    { 'RESUMO DO PERÍODO': 'Saldo do período (entradas − saídas)', 'VALOR': saldoPeriodoConsolidado },
+  ];
+  const wsResumoPeriodo = XLSX.utils.json_to_sheet(linhasResumoPeriodo);
+  wsResumoPeriodo['!cols'] = [{wch:36},{wch:22}];
+
   const wsUnica = XLSX.utils.json_to_sheet(linhas);
   wsUnica['!cols'] = [{wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:26},{wch:30},{wch:45}];
   const wbOut = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbOut, wsResumoPeriodo, 'Resumo');
   const nomeAbaSeguro = ('Fechamento ' + tituloPeriodo).replace(/[\/\\?*\[\]:]/g, '-').slice(0, 31);
   XLSX.utils.book_append_sheet(wbOut, wsUnica, nomeAbaSeguro);
 
@@ -4714,11 +4728,23 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
     return da.localeCompare(db);
   });
 
+  const totalEntradasExport = linhasUnificadas.filter(l=>l['TIPO']==='Entrada').reduce((s,l)=>s+l['VALOR (R$)'],0);
+  const totalSaidasExport = linhasUnificadas.filter(l=>l['TIPO']==='Saída').reduce((s,l)=>s+l['VALOR (R$)'],0);
+  const saldoPeriodoExport = totalEntradasExport - totalSaidasExport;
+  const linhasResumo = [
+    { 'RESUMO DO PERÍODO': 'Total de entradas (R$)', 'VALOR': totalEntradasExport },
+    { 'RESUMO DO PERÍODO': 'Total de saídas (R$)', 'VALOR': totalSaidasExport },
+    { 'RESUMO DO PERÍODO': 'Saldo do período (entradas − saídas)', 'VALOR': saldoPeriodoExport },
+  ];
+  const wsResumo = XLSX.utils.json_to_sheet(linhasResumo);
+  wsResumo['!cols'] = [{wch:36},{wch:18}];
+
   const wsUnica = XLSX.utils.json_to_sheet(linhasUnificadas);
   wsUnica['!cols'] = [
     {wch:11},{wch:9},{wch:13},{wch:32},{wch:32},{wch:26},{wch:16},{wch:20},{wch:26},{wch:30},{wch:45}
   ];
   const wbOut = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbOut, wsResumo, 'Resumo');
   XLSX.utils.book_append_sheet(wbOut, wsUnica, 'Conciliação Completa');
 
   // aba de alerta: TUDO que ainda não é dinheiro comprovadamente saído da conta —
