@@ -2057,7 +2057,7 @@ async function buscarGlobalTodasConciliacoes(suf){
       const hay = normalize([r.idReport, r.favorecido, r.empresa, r.centroCusto, r.projeto].join(' '));
       const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(r.valor, termo);
       if(bateTexto && dentroPeriodo(r.pagoEm)){
-        achados.push({ key, nomeSessao, savedAtTxt, data: r.pagoEm,
+        achados.push({ key, nomeSessao, savedAtTxt, savedAtRaw: snap.savedAt, data: r.pagoEm, idReport: r.idReport,
           tipo: 'Pagamento (relatório)', desc: `ID ${r.idReport} · ${r.favorecido||''} · ${r.empresa||''}`,
           valor: r.valor, status: r.resultado === 'ok' ? '✅ Conciliado' : (r.resultado==='warn'?'🟡 Sugestão':'🔴 Sem correspondência') });
       }
@@ -2066,7 +2066,7 @@ async function buscarGlobalTodasConciliacoes(suf){
       const hay = normalize([d.memo, d.name, d.fornecedor].join(' '));
       const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(d.amount, termo);
       if(bateTexto && dentroPeriodo(d.date)){
-        achados.push({ key, nomeSessao, savedAtTxt, data: d.date,
+        achados.push({ key, nomeSessao, savedAtTxt, savedAtRaw: snap.savedAt, data: d.date, chaveConteudo: chaveConteudoTx(d.date, d.amount, d.memo),
           tipo: 'Saída (extrato)', desc: `${d.fornecedor || d.memo}`, valor: Math.abs(d.amount),
           status: d.used ? '✅ Conciliado' : (d.identStatus==='auto'||d.identStatus==='manual' ? '✅ Identificado' : '🔴 Pendente') });
       }
@@ -2075,7 +2075,7 @@ async function buscarGlobalTodasConciliacoes(suf){
       const hay = normalize([c.memo, c.name, c.cliente, c.nf].join(' '));
       const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(c.amount, termo);
       if(bateTexto && dentroPeriodo(c.date)){
-        achados.push({ key, nomeSessao, savedAtTxt, data: c.date,
+        achados.push({ key, nomeSessao, savedAtTxt, savedAtRaw: snap.savedAt, data: c.date, chaveConteudo: chaveConteudoTx(c.date, c.amount, c.memo),
           tipo: 'Entrada (extrato)', desc: `${c.cliente || c.memo}${c.nf ? ' · NF '+c.nf : ''}`, valor: Math.abs(c.amount),
           status: c.used ? '✅ Conciliado' : (c.cliente ? '✅ Identificado' : '🔴 Pendente') });
       }
@@ -2084,20 +2084,46 @@ async function buscarGlobalTodasConciliacoes(suf){
       const hay = normalize([n.numeroNF, n.nomeCliente, n.cnpjCliente].join(' '));
       const bateTexto = !termo || hay.includes(termNorm) || valorMatchesSearch(n.valorLiquido, termo) || valorMatchesSearch(n.valorServico, termo);
       if(bateTexto && dentroPeriodo(n.dataEmissao)){
-        achados.push({ key, nomeSessao, savedAtTxt, data: n.dataEmissao,
+        achados.push({ key, nomeSessao, savedAtTxt, savedAtRaw: snap.savedAt, data: n.dataEmissao, numeroNF: n.numeroNF,
           tipo: 'Nota fiscal a receber', desc: `NF ${n.numeroNF} · ${n.nomeCliente}`, valor: n.valorLiquido,
           status: n.resultado === 'ok' ? '✅ Recebido' : '🔴 Pendente' });
       }
     });
   }
 
-  achados.sort((a,b) => new Date(b.data||0) - new Date(a.data||0));
+  // Deduplica por LANÇAMENTO REAL (não por sessão salva) — a mesma linha do relatório ou o
+  // mesmo lançamento do extrato aparece de novo a cada vez que aquele período foi reprocessado
+  // ao longo do dia; sem isso, a busca mostrava uma cópia por reprocessamento, inflando a
+  // contagem sem nenhum lançamento novo de verdade existir. Mantém sempre a versão já resolvida
+  // (✅), e entre versões igualmente resolvidas (ou igualmente não resolvidas), a mais recente.
+  const ehResolvido = (status) => (status||'').startsWith('✅');
+  const achadosPorChave = new Map();
+  achados.forEach(a => {
+    let chaveIdentidade;
+    if(a.tipo === 'Pagamento (relatório)') chaveIdentidade = 'report:' + a.idReport;
+    else if(a.tipo === 'Nota fiscal a receber') chaveIdentidade = 'nota:' + a.numeroNF;
+    else chaveIdentidade = a.tipo + ':' + a.chaveConteudo; // Saída/Entrada do extrato
+    const existente = achadosPorChave.get(chaveIdentidade);
+    if(!existente){
+      achadosPorChave.set(chaveIdentidade, a);
+    } else {
+      const novoMaisResolvido = ehResolvido(a.status) && !ehResolvido(existente.status);
+      const antigoMaisResolvido = ehResolvido(existente.status) && !ehResolvido(a.status);
+      if(novoMaisResolvido){
+        achadosPorChave.set(chaveIdentidade, a);
+      } else if(!antigoMaisResolvido && new Date(a.savedAtRaw||0) > new Date(existente.savedAtRaw||0)){
+        achadosPorChave.set(chaveIdentidade, a);
+      }
+    }
+  });
+  const achadosDeduplicados = [...achadosPorChave.values()];
+  achadosDeduplicados.sort((a,b) => new Date(b.data||0) - new Date(a.data||0));
 
-  if(achados.length === 0){
+  if(achadosDeduplicados.length === 0){
     resultEl.innerHTML = '<div style="margin-top:8px;color:var(--ink-soft);font-size:12.5px;">Nada encontrado com esse termo/período em nenhuma conciliação salva.</div>';
     return;
   }
-  resultEl.innerHTML = achados.slice(0,30).map(a => `
+  resultEl.innerHTML = achadosDeduplicados.slice(0,30).map(a => `
     <div class="busca-global-item">
       <div>
         <div class="busca-global-session">${a.nomeSessao}</div>
