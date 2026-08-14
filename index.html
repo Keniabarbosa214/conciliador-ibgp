@@ -3550,9 +3550,13 @@ async function runReconciliation(opts){
           r.manualConfirm = prev.manualConfirm;
           r.matchedById = prev.matchedById;
           r.idValorDivergente = prev.idValorDivergente;
+        } else {
+          // O lançamento bancário correspondente não está NESTE extrato — mas já foi conciliado
+          // de verdade em outra conciliação salva (período diferente). Não é uma pendência real,
+          // então marca como resolvida (excluída da lista de "a conciliar"), com a nota explicando.
+          r.resultado = 'excluded';
+          r.excludedReason = 'Já conciliado em outra conciliação salva (pago em ' + fmtDateISOtoBR(prev.matchedTx.date) + ', fora do período deste extrato) — não é uma pendência real.';
         }
-        // se o lançamento não existir mais nesse recorte (ex: ficou fora do período), a linha
-        // volta a passar pelo motor normal de conciliação logo abaixo — nada a fazer aqui.
       } else if(prev.resultado === 'bad' && prev.excludedReason && prev.excludedReason.indexOf('Revisado manualmente') === 0){
         r.resultado = 'bad';
         r.excludedReason = prev.excludedReason;
@@ -3592,6 +3596,7 @@ async function runReconciliation(opts){
   // Filter which rows are eligible for matching
   const eligible = report.filter(r => {
     if(r.resultado === 'ok') return false; // já resolvido pelo número de pagamento ou restaurado
+    if(r.resultado === 'excluded') return false; // já resolvido (revisado manualmente ou conciliado em outra sessão)
     if(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0) return false; // decisão manual preservada
     if(ignorarAberto && r.status.toLowerCase() === 'aberto') return false;
     if(ignorarFalha && r.status.toLowerCase().startsWith('falha')) return false;
@@ -3713,6 +3718,11 @@ async function runReconciliation(opts){
               n.matchedTx = c; c.used = true; n.resultado = 'ok';
               n.manualConfirm = prev.manualConfirm; n.matchedByNF = prev.matchedByNF;
               aplicarDadosNotaAoCredito(c, n);
+            } else {
+              // Recebimento correspondente não está NESTE extrato — mas já foi conciliado em
+              // outra conciliação salva (período diferente). Não é pendência real.
+              n.resultado = 'excluded';
+              n.excludedReason = 'Já conciliado em outra conciliação salva (recebido em ' + fmtDateISOtoBR(prev.matchedTx.date) + ', fora do período deste extrato) — não é uma pendência real.';
             }
           } else if(prev.resultado === 'bad' && prev.excludedReason && prev.excludedReason.indexOf('Revisado manualmente') === 0){
             n.resultado = 'bad';
@@ -5014,7 +5024,8 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   // linhas sem correspondência no extrato, sugestões não confirmadas, E também as que estão
   // com status "Aberto"/"Falha no pagamento" no relatório (que nem tentam cruzar com o banco,
   // mas continuam sendo um valor que o IBGP ainda deve).
-  const pendentesRelatorio = report.filter(r => (r.resultado === 'warn' || r.resultado === 'bad' || r.resultado === 'excluded') && !(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0));
+  const foiResolvidoEmOutraSessao = (r) => r.resultado === 'excluded' && r.excludedReason && r.excludedReason.indexOf('Já conciliado em outra conciliação salva') === 0;
+  const pendentesRelatorio = report.filter(r => (r.resultado === 'warn' || r.resultado === 'bad' || r.resultado === 'excluded') && !(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0) && !foiResolvidoEmOutraSessao(r));
   if(pendentesRelatorio.length > 0){
     const totalPendente = pendentesRelatorio.reduce((s,r)=> s + (r.valor||0), 0);
     const pendentesRows = pendentesRelatorio.map(r => {
@@ -5048,7 +5059,7 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   // segunda aba, só pra notas fiscais que ainda nem venceram/foram pagas — isso não é
   // lançamento do extrato, então não cabe na aba principal (que é sempre extrato x relatório)
   if(reportReceber.length > 0){
-    const notasRows = reportReceber.filter(n => n.resultado !== 'ok').map(n => ({
+    const notasRows = reportReceber.filter(n => n.resultado !== 'ok' && !(n.resultado === 'excluded' && n.excludedReason && n.excludedReason.indexOf('Já conciliado em outra conciliação salva') === 0)).map(n => ({
       'Nº NF': n.numeroNF, 'CLIENTE': n.nomeCliente, 'CNPJ': n.cnpjCliente,
       'VALOR SERVIÇO (R$)': n.valorServico, 'VALOR LÍQUIDO (R$)': n.valorLiquido,
       'EMITIDA EM': fmtDateISOtoBR(n.dataEmissao), 'STATUS': 'Pendente de recebimento'
