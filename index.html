@@ -4713,8 +4713,12 @@ function buscarPagamentoPorValor(rowIndex, valorTexto){
   const r = report.find(x => x.rowIndex === rowIndex);
   const valor = parseValorBR(valorTexto);
   if(valor === null){ resultEl.innerHTML = ''; return; }
-  const encontrados = debits.filter(d => !d.used && Math.abs(Math.abs(d.amount) - valor) < 0.01)
+  // Inclui TAMBÉM lançamentos já vinculados a outra linha — antes ficavam escondidos, dando a
+  // falsa impressão de "não existe esse pagamento no extrato" quando na verdade ele existe, só
+  // está (talvez incorretamente) vinculado a outra linha do relatório, um sinal de duplicidade.
+  const encontrados = debits.filter(d => Math.abs(Math.abs(d.amount) - valor) < 0.01)
     .sort((a,b) => {
+      if(!!a.used !== !!b.used) return a.used ? 1 : -1; // livres primeiro, vinculados depois
       const diffA = r.pagoEm ? Math.abs(daysBetween(a.date, r.pagoEm)) : 0;
       const diffB = r.pagoEm ? Math.abs(daysBetween(b.date, r.pagoEm)) : 0;
       return diffA - diffB;
@@ -4725,9 +4729,11 @@ function buscarPagamentoPorValor(rowIndex, valorTexto){
   }
   resultEl.innerHTML = '<div class="cand-list" style="margin-top:6px;">' + encontrados.map(d => {
     const dias = r.pagoEm ? Math.abs(daysBetween(d.date, r.pagoEm)) : null;
-    return `<div class="cand" onclick="confirmarPagamentoPorValor(${rowIndex}, '${d.fitid}', ${valor})">
+    const jaVinculado = !!d.used;
+    const rOutro = jaVinculado ? report.find(x => x.matchedTx === d) : null;
+    return `<div class="cand" onclick="${jaVinculado ? '' : `confirmarPagamentoPorValor(${rowIndex}, '${d.fitid}', ${valor})`}" style="${jaVinculado ? 'opacity:.6;cursor:default;' : ''}">
       <div class="cand-left">
-        <span class="meta">${fmtDateISOtoBR(d.date)} · ${d.memo}${d.name ? ' · '+d.name : ''}${d.used ? ' · <em>já vinculado</em>' : ''}</span>
+        <span class="meta">${fmtDateISOtoBR(d.date)} · ${d.memo}${d.name ? ' · '+d.name : ''}${jaVinculado ? ' · <em>⚠️ já vinculado à linha ID '+(rOutro?rOutro.idReport:'?')+' — pode ser duplicidade no relatório</em>' : ''}</span>
         <span class="score-line">${dias!==null ? dias+' dias de diferença do "pago em"' : ''}</span>
       </div>
       <span class="amt">${fmtMoney(Math.abs(d.amount))}</span>
