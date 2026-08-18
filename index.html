@@ -4152,12 +4152,14 @@ function renderResults(){
           situacaoHtml = '<span class="pill ok">✅ Identificado (banco)</span>';
           acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="debito" value="${(t.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="debito" data-campo="cc"`)}
-            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="debito" data-campo="proj"`)}`;
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="debito" data-campo="proj"`)}
+            <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerIdentificacao('${rowKey}','debito')">↩️ Desfazer (voltar a pendente)</button>`;
         } else if(t.identStatus === 'manual'){
           situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
           acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="debito" value="${(t.fornecedor||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor">
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="debito" data-campo="cc"`)}
-            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="debito" data-campo="proj"`)}`;
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="debito" data-campo="proj"`)}
+            <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerIdentificacao('${rowKey}','debito')">↩️ Desfazer (voltar a pendente)</button>`;
         } else {
           situacaoHtml = '<span class="pill bad">🔧 A conciliar</span>';
           acaoHtml = null;
@@ -4175,7 +4177,8 @@ function renderResults(){
           situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
           acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
-            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}`;
+            ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
+            <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerIdentificacao('${rowKey}','credito')">↩️ Desfazer (voltar a pendente)</button>`;
         } else {
           situacaoHtml = '<span class="pill bad">🔧 A conciliar</span>';
           acaoHtml = null;
@@ -4747,6 +4750,25 @@ function renderResults(){
     });
   });
 }
+
+// Desfaz uma identificação (auto ou manual), voltando o lançamento a "pendente" — limpa
+// fornecedor/cliente, centro de custo, projeto e observações. Não desvincula de linha do
+// relatório (isso é "desvincularPagamento"/"desvincularNota") — é só pra identificações soltas.
+function desfazerIdentificacao(fitid, modo){
+  if(!confirm('Desfazer essa identificação? O lançamento volta a aparecer como pendente, sem fornecedor/centro de custo/projeto.')) return;
+  if(modo === 'debito'){
+    const d = debits.find(x => x.fitid === fitid);
+    if(!d) return;
+    d.fornecedor = ''; d.centroCusto = ''; d.projeto = ''; d.observacoes = ''; d.identStatus = 'pendente';
+  } else if(modo === 'credito'){
+    const c = credits.find(x => x.fitid === fitid);
+    if(!c) return;
+    c.cliente = ''; c.nf = ''; c.centroCusto = ''; c.projeto = ''; c.observacoes = '';
+  }
+  renderResults();
+  persistCurrentSession();
+}
+window.desfazerIdentificacao = desfazerIdentificacao;
 
 function marcarDebitoIdentificado(fitid){
   const d = debits.find(x => x.fitid === fitid);
