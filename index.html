@@ -3458,6 +3458,19 @@ async function runReconciliation(opts){
     });
   }
 
+  // Reaplica a regra fixa da conta ATI depois da restauração — sem isso, uma classificação
+  // salva ANTES dessa regra existir (de quando o lançamento ainda não tinha fornecedor/centro
+  // de custo definidos) vencia por engano a regra nova, que é sempre a mesma pra essa conta.
+  if(contaEhATI){
+    credits.forEach(c => {
+      c.cliente = 'IBGP ATI BRUMADINHO';
+      c.nf = 'S/NF';
+      c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+      const partesMemoATI2 = (c.memo||'').split(' · ');
+      c.observacoes = partesMemoATI2.length > 2 ? partesMemoATI2.slice(2).join(' · ') : '';
+    });
+  }
+
   // Detectar pares de estorno: uma saída (débito) revertida por uma devolução (crédito) do
   // mesmo valor, em data próxima. O débito revertido nunca chegou a ser um pagamento efetivo,
   // então ele não deve concorrer como sugestão de conciliação, e a devolução não é receita real.
