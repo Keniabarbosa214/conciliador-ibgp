@@ -666,6 +666,7 @@
       <div class="tab" data-tab="receber">📥 NF a Receber <span class="count" id="cReceber"></span></div>
       <div class="tab" data-tab="recebimentos">💰 Recebimentos de clientes <span class="count" id="cRec"></span></div>
       <div class="tab" data-tab="movimento">🔀 Movimento do período <span class="count" id="cMov"></span></div>
+      <div class="tab" data-tab="controle" style="background:#FFF3D6;">⚠️ Duplicidades / Em Aberto <span class="count" id="cControle"></span></div>
     </div>
 
     <div class="legend-help" id="legendHelp"></div>
@@ -3922,6 +3923,13 @@ function renderSummary(){
   document.getElementById('cRec').textContent = '(' + credits.length + ')';
   document.getElementById('cMov').textContent = '(' + (debits.length + credits.length) + ')';
   document.getElementById('cExtratoCompleto').textContent = '(' + (debitosACompletar + creditosACompletar) + ' a conciliar)';
+  {
+    const gruposValorCtrl = new Map();
+    report.forEach(r => { if(r.valor !== null){ const k = Math.round(r.valor*100); gruposValorCtrl.set(k, (gruposValorCtrl.get(k)||0)+1); } });
+    const qtdDuplicidades = [...gruposValorCtrl.values()].filter(n => n >= 2).length;
+    const qtdEmAbertoCtrl = report.filter(r => (r.status||'').toLowerCase() === 'aberto').length;
+    document.getElementById('cControle').textContent = '(' + (qtdDuplicidades + qtdEmAbertoCtrl) + ')';
+  }
 
   renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo);
   renderLegend();
@@ -4390,6 +4398,68 @@ function renderResults(){
       </tr>`;
     });
     html += '</tbody></table>';
+    wrap.innerHTML = html;
+    return;
+  }
+
+  if(currentTab === 'controle'){
+    // Duplicidades: agrupa TODAS as linhas do relatório (independente do status atual) pelo
+    // valor exato — quando duas ou mais linhas têm o mesmíssimo valor, é um forte indício de
+    // duplicidade (a mesma solicitação lançada mais de uma vez), o padrão que apareceu várias
+    // vezes hoje (CENTRAL CONTAINER, ATACADÃO, FARMAKRO, CONDOMÍNIO...).
+    const gruposPorValor = new Map();
+    report.forEach(r => {
+      if(r.valor === null) return;
+      const chave = Math.round(r.valor*100);
+      if(!gruposPorValor.has(chave)) gruposPorValor.set(chave, []);
+      gruposPorValor.get(chave).push(r);
+    });
+    const duplicidades = [...gruposPorValor.entries()]
+      .filter(([,grupo]) => grupo.length >= 2)
+      .sort((a,b) => b[1].length - a[1].length || b[0] - a[0]);
+
+    const emAberto = report.filter(r => (r.status||'').toLowerCase() === 'aberto');
+    const totalEmAberto = emAberto.reduce((s,r)=> s + (r.valor||0), 0);
+
+    let html = `<div style="padding:4px;">`;
+
+    html += `<div style="background:#FDEEEE;border:1.5px solid var(--bad);border-radius:6px;padding:14px;margin-bottom:16px;">
+      <h3 style="margin:0 0 8px;color:var(--bad);font-size:15px;">🔍 Possíveis duplicidades (${duplicidades.length} valor(es) repetido(s))</h3>
+      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">Linhas do relatório com o MESMO valor exato — reveja cada grupo; pode ser coincidência (dois pagamentos diferentes do mesmo tamanho) ou duplicidade de verdade.</p>`;
+    if(duplicidades.length === 0){
+      html += `<div style="color:var(--ok);font-size:13px;">✅ Nenhum valor repetido encontrado nesse relatório.</div>`;
+    } else {
+      duplicidades.forEach(([chave, grupo]) => {
+        html += `<div style="background:#fff;border-radius:4px;padding:10px;margin-bottom:8px;">
+          <div style="font-weight:700;color:var(--navy);margin-bottom:6px;">${fmtMoney(chave/100)} — aparece ${grupo.length} vezes</div>`;
+        grupo.forEach(r => {
+          const statusTxt = r.resultado === 'ok' ? '✅ Conciliado' : r.resultado === 'warn' ? '🟡 Sugestão pendente' :
+            (r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente')===0) ? '✓ Revisado (não é pendência)' :
+            r.resultado === 'excluded' ? '⚪ Excluído/resolvido em outro lugar' : '🔴 Sem correspondência';
+          html += `<div style="font-size:12px;padding:4px 0;border-top:1px solid var(--paper-2);display:flex;justify-content:space-between;gap:8px;">
+            <span>ID ${r.idReport} · ${r.favorecido||'(sem fornecedor)'} · ${r.empresa||''} · ${fmtDateISOtoBR(r.pagoEm)}</span>
+            <span style="white-space:nowrap;">${statusTxt}</span>
+          </div>`;
+        });
+        html += `</div>`;
+      });
+    }
+    html += `</div>`;
+
+    html += `<div style="background:#FFF3D6;border:1.5px solid var(--gold);border-radius:6px;padding:14px;">
+      <h3 style="margin:0 0 8px;color:#7A5B00;font-size:15px;">📋 Pagamentos em aberto (${emAberto.length} linha(s) — ${fmtMoney(totalEmAberto)})</h3>
+      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">Linhas do relatório com status "Aberto" — ainda não pagas de acordo com o próprio relatório de cobranças.</p>`;
+    if(emAberto.length === 0){
+      html += `<div style="color:var(--ok);font-size:13px;">✅ Nenhum pagamento em aberto nesse relatório.</div>`;
+    } else {
+      html += `<table class="results" style="width:100%;"><thead><tr><th>ID</th><th>Empresa</th><th>Fornecedor</th><th>Valor</th><th>Pago em (previsto)</th></tr></thead><tbody>`;
+      emAberto.sort((a,b)=> (a.pagoEm||0) - (b.pagoEm||0)).forEach(r => {
+        html += `<tr><td>${r.idReport}</td><td>${r.empresa||''}</td><td>${r.favorecido||''}</td><td class="valor">${fmtMoney(r.valor||0)}</td><td>${fmtDateISOtoBR(r.pagoEm)}</td></tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+    html += `</div></div>`;
+
     wrap.innerHTML = html;
     return;
   }
