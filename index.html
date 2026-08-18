@@ -3604,7 +3604,12 @@ async function runReconciliation(opts){
   // costuma cortar o texto antes de chegar no número). É a forma mais confiável de
   // cruzar, então roda antes e "reserva" o lançamento pro cruzamento por valor+data.
   report.forEach(r => {
-    if(r.resultado) return; // já resolvido pela restauração acima
+    // Pula só se já foi resolvido de forma "forte" (ok direto, ou revisado manualmente por
+    // decisão explícita da pessoa). Se o resultado atual vem do "fallback" de outra sessão
+    // (ela não achou o lançamento localmente), ainda tenta o casamento direto por ID aqui —
+    // se existir um candidato de verdade NESTA sessão, ele é mais forte que aquele fallback.
+    const vemDoFallbackDeOutraSessao = r.resultado === 'excluded' && r.excludedReason && r.excludedReason.indexOf('Já conciliado em outra conciliação salva') === 0;
+    if(r.resultado && !vemDoFallbackDeOutraSessao) return;
     if(!r.idReport) return;
     const candidatosPorId = debits.filter(d => !d.used && !d.estornado && !isMesmaTitularidade(d.memo) && !isBankOperation(d.memo) && d.idExtrato && String(d.idExtrato) === String(r.idReport));
     if(candidatosPorId.length === 1){
@@ -3616,6 +3621,7 @@ async function runReconciliation(opts){
       r.manualConfirm = false;
       r.matchedById = true;
       r.idValorDivergente = !valorBate;
+      r.excludedReason = null;
     }
   });
 
