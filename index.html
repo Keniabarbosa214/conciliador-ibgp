@@ -3941,7 +3941,8 @@ function renderSummary(){
     report.forEach(r => { if(r.valor !== null){ const k = Math.round(r.valor*100); gruposValorCtrl.set(k, (gruposValorCtrl.get(k)||0)+1); } });
     const qtdDuplicidades = [...gruposValorCtrl.values()].filter(n => n >= 2).length;
     const qtdEmAbertoCtrl = report.filter(r => (r.status||'').toLowerCase() === 'aberto').length;
-    document.getElementById('cControle').textContent = '(' + (qtdDuplicidades + qtdEmAbertoCtrl) + ')';
+    const qtdFalhaCtrl = report.filter(r => (r.status||'').toLowerCase().startsWith('falha')).length;
+    document.getElementById('cControle').textContent = '(' + (qtdDuplicidades + qtdEmAbertoCtrl + qtdFalhaCtrl) + ')';
   }
 
   renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo);
@@ -4479,6 +4480,7 @@ function renderResults(){
       .sort((a,b) => b[1].length - a[1].length || b[0] - a[0]);
 
     const emAbertoTodos = report.filter(r => (r.status||'').toLowerCase() === 'aberto');
+    const linhasFalhaCtrl = report.filter(r => (r.status||'').toLowerCase().startsWith('falha'));
     // Pra cada linha "Aberto", já confere se existe pagamento parecido no extrato — separa em
     // duas categorias: "genuinamente em aberto" (nada encontrado, é dinheiro que falta pagar
     // de verdade) e "provável duplicidade" (o dinheiro já saiu, só que reivindicado por OUTRA
@@ -4517,6 +4519,18 @@ function renderResults(){
       });
     }
     html += `</div>`;
+
+    if(linhasFalhaCtrl.length > 0){
+      const totalFalhaCtrl = linhasFalhaCtrl.reduce((s,r)=> s + (r.valor||0), 0);
+      html += `<div style="background:#F3E8FF;border:1.5px solid #8B5CF6;border-radius:6px;padding:14px;margin-bottom:16px;">
+        <h3 style="margin:0 0 8px;color:#5B21B6;font-size:15px;">❌ Falha no pagamento (${linhasFalhaCtrl.length} linha(s) — ${fmtMoney(totalFalhaCtrl)})</h3>
+        <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">Linhas do relatório com status "Falha" — o pagamento foi tentado, mas não foi efetivado (pode ter caído, sido cancelado, ou precisar ser refeito).</p>
+        <table class="results" style="width:100%;"><thead><tr><th>ID</th><th>Empresa</th><th>Fornecedor</th><th>Valor</th><th>Pago em (tentado)</th></tr></thead><tbody>`;
+      linhasFalhaCtrl.sort((a,b)=> (a.pagoEm||0) - (b.pagoEm||0)).forEach(r => {
+        html += `<tr><td>${r.idReport}</td><td>${r.empresa||''}</td><td>${r.favorecido||''}</td><td class="valor">${fmtMoney(r.valor||0)}</td><td>${fmtDateISOtoBR(r.pagoEm)}</td></tr>`;
+      });
+      html += `</tbody></table></div>`;
+    }
 
     if(provavelDuplicidade.length > 0){
       html += `<div style="background:#FDEEEE;border:1.5px solid var(--bad);border-radius:6px;padding:14px;margin-bottom:16px;">
