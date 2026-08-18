@@ -4430,8 +4430,22 @@ function renderResults(){
       .filter(([,grupo]) => grupo.length >= 2)
       .sort((a,b) => b[1].length - a[1].length || b[0] - a[0]);
 
-    const emAberto = report.filter(r => (r.status||'').toLowerCase() === 'aberto');
-    const totalEmAberto = emAberto.reduce((s,r)=> s + (r.valor||0), 0);
+    const emAbertoTodos = report.filter(r => (r.status||'').toLowerCase() === 'aberto');
+    // Pra cada linha "Aberto", já confere se existe pagamento parecido no extrato — separa em
+    // duas categorias: "genuinamente em aberto" (nada encontrado, é dinheiro que falta pagar
+    // de verdade) e "provável duplicidade" (o dinheiro já saiu, só que reivindicado por OUTRA
+    // linha do relatório — o relatório original só não foi atualizado com o status certo).
+    const emAbertoComCheck = emAbertoTodos.map(r => {
+      let candidato = r.idReport ? debits.find(d => !d.estornado && String(d.idExtrato) === String(r.idReport)) : null;
+      if(!candidato && r.valor !== null){
+        candidato = debits.find(d => !d.estornado && Math.abs(Math.abs(d.amount) - r.valor) < 0.01 &&
+          (!r.pagoEm || Math.abs(daysBetween(d.date, r.pagoEm)) <= 15));
+      }
+      return { r, candidato };
+    });
+    const emAberto = emAbertoComCheck.filter(x => !x.candidato);
+    const provavelDuplicidade = emAbertoComCheck.filter(x => x.candidato);
+    const totalEmAberto = emAberto.reduce((s,x)=> s + (x.r.valor||0), 0);
 
     let html = `<div style="padding:4px;">`;
 
@@ -4458,25 +4472,27 @@ function renderResults(){
     }
     html += `</div>`;
 
+    if(provavelDuplicidade.length > 0){
+      html += `<div style="background:#FDEEEE;border:1.5px solid var(--bad);border-radius:6px;padding:14px;margin-bottom:16px;">
+        <h3 style="margin:0 0 8px;color:var(--bad);font-size:15px;">⚠️ Marcadas "Aberto" mas o dinheiro já saiu (${provavelDuplicidade.length}) — não contam no total de em aberto</h3>
+        <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">O relatório original ainda diz "Aberto" nessas linhas, mas já existe um pagamento igual no extrato — reivindicado por OUTRA linha. Provavelmente são duplicatas da mesma solicitação; revise e marque como "Revisado" na aba "A conciliar" se confirmar.</p>
+        <table class="results" style="width:100%;"><thead><tr><th>ID</th><th>Empresa</th><th>Fornecedor</th><th>Valor</th><th>Pago em (previsto)</th><th>Achado no extrato</th></tr></thead><tbody>`;
+      provavelDuplicidade.forEach(({r,candidato}) => {
+        html += `<tr><td>${r.idReport}</td><td>${r.empresa||''}</td><td>${r.favorecido||''}</td><td class="valor">${fmtMoney(r.valor||0)}</td><td>${fmtDateISOtoBR(r.pagoEm)}</td>
+          <td style="font-size:11.5px;color:var(--bad);">Pago em ${fmtDateISOtoBR(candidato.date)}${candidato.used?' — vinculado a outra linha do relatório':''}</td></tr>`;
+      });
+      html += `</tbody></table></div>`;
+    }
+
     html += `<div style="background:#FFF3D6;border:1.5px solid var(--gold);border-radius:6px;padding:14px;">
-      <h3 style="margin:0 0 8px;color:#7A5B00;font-size:15px;">📋 Pagamentos em aberto (${emAberto.length} linha(s) — ${fmtMoney(totalEmAberto)})</h3>
-      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">Linhas do relatório com status "Aberto" — o sistema já confere se cada uma tem, mesmo assim, um pagamento parecido no extrato (sinal de que o relatório pode estar desatualizado).</p>`;
+      <h3 style="margin:0 0 8px;color:#7A5B00;font-size:15px;">📋 Genuinamente em aberto (${emAberto.length} linha(s) — ${fmtMoney(totalEmAberto)})</h3>
+      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px;">Linhas "Aberto" que NÃO têm nenhum pagamento parecido no extrato — dinheiro que falta pagar de verdade.</p>`;
     if(emAberto.length === 0){
-      html += `<div style="color:var(--ok);font-size:13px;">✅ Nenhum pagamento em aberto nesse relatório.</div>`;
+      html += `<div style="color:var(--ok);font-size:13px;">✅ Nenhum pagamento genuinamente em aberto nesse relatório.</div>`;
     } else {
-      html += `<table class="results" style="width:100%;"><thead><tr><th>ID</th><th>Empresa</th><th>Fornecedor</th><th>Valor</th><th>Pago em (previsto)</th><th>Confira no extrato</th></tr></thead><tbody>`;
-      emAberto.sort((a,b)=> (a.pagoEm||0) - (b.pagoEm||0)).forEach(r => {
-        // Verifica se existe, mesmo assim, um lançamento parecido no extrato — por ID exato
-        // (mais confiável) ou, se não tiver, por valor dentro de uma janela de dias do previsto.
-        let candidato = r.idReport ? debits.find(d => !d.estornado && String(d.idExtrato) === String(r.idReport)) : null;
-        if(!candidato && r.valor !== null){
-          candidato = debits.find(d => !d.estornado && Math.abs(Math.abs(d.amount) - r.valor) < 0.01 &&
-            (!r.pagoEm || Math.abs(daysBetween(d.date, r.pagoEm)) <= 15));
-        }
-        const avisoPago = candidato
-          ? `<span style="color:var(--bad);font-weight:700;">⚠️ Parece já pago em ${fmtDateISOtoBR(candidato.date)}${candidato.used?' (vinculado a outra linha!)':''} — confira</span>`
-          : `<span style="color:var(--ink-soft);">nada encontrado</span>`;
-        html += `<tr><td>${r.idReport}</td><td>${r.empresa||''}</td><td>${r.favorecido||''}</td><td class="valor">${fmtMoney(r.valor||0)}</td><td>${fmtDateISOtoBR(r.pagoEm)}</td><td style="font-size:11.5px;">${avisoPago}</td></tr>`;
+      html += `<table class="results" style="width:100%;"><thead><tr><th>ID</th><th>Empresa</th><th>Fornecedor</th><th>Valor</th><th>Pago em (previsto)</th></tr></thead><tbody>`;
+      emAberto.sort((a,b)=> (a.r.pagoEm||0) - (b.r.pagoEm||0)).forEach(({r}) => {
+        html += `<tr><td>${r.idReport}</td><td>${r.empresa||''}</td><td>${r.favorecido||''}</td><td class="valor">${fmtMoney(r.valor||0)}</td><td>${fmtDateISOtoBR(r.pagoEm)}</td></tr>`;
       });
       html += `</tbody></table>`;
     }
