@@ -3370,6 +3370,12 @@ async function runReconciliation(opts){
   debits = txs.filter(t => t.trntype === 'DEBIT');
   credits = txs.filter(t => t.trntype !== 'DEBIT');
   const centroCustoReceberPadrao = (document.getElementById('cfgCentroCustoReceber').value || '').trim();
+  // Conta ATI Conta Mãe (Ag. 4092, Conta 72.438-6) — TODA entrada dessa conta específica é
+  // tratada como transferência entre contas da mesma empresa, com fornecedor/centro de
+  // custo/observação sempre fixos. Verifica só pelo NÚMERO da conta (não pelo nome/apelido),
+  // pra não confundir com outras contas que também tenham "ATI" no nome (ex: unidades diferentes).
+  const contaEhATI = normalize(contaAtualKey||'').replace(/[^A-Z0-9]/g,'').includes('724386');
+
   credits.forEach(c => {
     c.cliente = cleanClientName(c.name, c.memo);
     c.nf = extractNF(c.memo, c.name);
@@ -3388,6 +3394,13 @@ async function runReconciliation(opts){
       c.cliente = 'INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
       c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
       c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    }
+    // Regra fixa da conta ATI — toda entrada, sem exceção, vira transferência entre contas.
+    if(contaEhATI){
+      c.cliente = 'IBGP ATI';
+      c.nf = 'S/NF';
+      c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+      c.observacoes = 'COMP. DAS DESPESAS ANEXO I E PART INFORMADA';
     }
   });
   const bankName = (document.getElementById('cfgBankName').value || 'SICOOB').trim().toUpperCase() || 'SICOOB';
