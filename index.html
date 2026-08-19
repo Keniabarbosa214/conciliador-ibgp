@@ -1254,6 +1254,7 @@ function renderContaUploadSelector(){
       <input type="text" id="contaUploadInput" class="conta-search-input" value="${contaAtualLabel.replace(/"/g,'&quot;')}" placeholder="Buscar conta..." autocomplete="off">
       <div class="conta-search-list" id="contaUploadList"></div>
     </div>
+    <div style="font-size:10px;color:#FFD966;margin-top:3px;">🔧 diagnóstico temporário — chave interna: "${contaAtualKey}"</div>
   `;
 
   const inp = document.getElementById('contaUploadInput');
@@ -1279,6 +1280,8 @@ function renderContaUploadSelector(){
     contaAtualLabel = contasConhecidas[contaAtualKey] || '';
     inp.value = contaAtualLabel;
     listEl.style.display = 'none';
+    const diagEl = wrap.querySelector('div[style*="diagnóstico"]') || wrap.lastElementChild;
+    if(diagEl) diagEl.textContent = `🔧 diagnóstico temporário — chave interna: "${contaAtualKey}"`;
   });
   document.addEventListener('click', (e) => {
     if(!wrap.contains(e.target)) listEl.style.display = 'none';
@@ -4076,7 +4079,7 @@ function renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo){
   `;
 
   const headerTag = document.getElementById('headerTag');
-  const atualizarHeaderTag = () => { if(headerTag) headerTag.textContent = `${contaAtualLabel} · extrato × relatório de cobranças`; };
+  const atualizarHeaderTag = () => { if(headerTag) headerTag.textContent = `${contaAtualLabel} · extrato × relatório de cobranças · [diagnóstico: "${contaAtualKey}"]`; };
   atualizarHeaderTag();
 
   const selConta = document.getElementById('contaBancariaSelect');
