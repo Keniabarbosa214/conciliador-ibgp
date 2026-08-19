@@ -3429,6 +3429,7 @@ async function runReconciliation(opts){
       c.cliente = 'IBGP ATI BRUMADINHO';
       c.nf = 'S/NF';
       c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+      c.projeto = '10771 - ATI BRUMADINHO';
       // A observação é o texto que VARIA no final do memo (depois do "REM.: ..."), não um texto
       // fixo — cada entrada tem uma descrição diferente (compra de chip, cartão VT, etc.), e
       // é justamente essa parte variável que precisa ir pra Observações.
@@ -3495,6 +3496,7 @@ async function runReconciliation(opts){
       c.cliente = 'IBGP ATI BRUMADINHO';
       c.nf = 'S/NF';
       c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+      c.projeto = '10771 - ATI BRUMADINHO';
       const partesMemoATI2 = (c.memo||'').split(' · ');
       c.observacoes = partesMemoATI2.length > 2 ? partesMemoATI2.slice(2).join(' · ') : '';
     });
