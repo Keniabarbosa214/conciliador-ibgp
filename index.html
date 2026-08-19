@@ -1282,6 +1282,7 @@ function renderContaUploadSelector(){
     listEl.style.display = 'none';
     const diagEl = wrap.querySelector('div[style*="diagnóstico"]') || wrap.lastElementChild;
     if(diagEl) diagEl.textContent = `🔧 diagnóstico temporário — chave interna: "${contaAtualKey}"`;
+    refreshSavedSessionsList();
   });
   document.addEventListener('click', (e) => {
     if(!wrap.contains(e.target)) listEl.style.display = 'none';
@@ -2439,7 +2440,31 @@ async function refreshSavedSessionsList(){
   }
   items.sort((a,b)=> new Date(b.snap.savedAt) - new Date(a.snap.savedAt));
   if(items.length===0){ listEl.innerHTML=''; return; }
-  listEl.innerHTML = `<h4>Conciliações salvas</h4>` + items.map(it => `
+
+  // Filtra pela conta atualmente selecionada — evita misturar lançamentos/sessões de contas
+  // diferentes na tela, uma fonte de confusão recorrente. Sessões sem conta registrada (bem
+  // antigas) só aparecem se "ver todas" estiver marcado, já que não dá pra saber de qual conta são.
+  const verTodas = document.getElementById('cfgVerTodasContasSessoes')?.checked || false;
+  const labelContaAtual = contasConhecidas[contaAtualKey] || contaAtualLabel || '';
+  const itemsFiltrados = verTodas ? items : items.filter(it =>
+    it.snap.contaKey === contaAtualKey || (it.snap.contaLabel && it.snap.contaLabel === labelContaAtual)
+  );
+  const escondidas = items.length - itemsFiltrados.length;
+
+  const avisoFiltro = `
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:8px;">
+      Mostrando só conciliações da conta <b>${labelContaAtual || '(nenhuma selecionada)'}</b>.
+      ${escondidas > 0 ? escondidas + ' sessão(ões) de outras contas (ou sem conta registrada) estão escondidas — ' : ''}
+      <label style="cursor:pointer;"><input type="checkbox" id="cfgVerTodasContasSessoes" ${verTodas?'checked':''} style="vertical-align:middle;"> ver de todas as contas</label>
+    </div>`;
+
+  if(itemsFiltrados.length===0 && !verTodas){
+    listEl.innerHTML = `<h4>Conciliações salvas</h4>${avisoFiltro}<div style="font-size:12px;color:var(--ink-soft);">Nenhuma conciliação salva ainda pra essa conta.</div>`;
+    document.getElementById('cfgVerTodasContasSessoes').addEventListener('change', refreshSavedSessionsList);
+    return;
+  }
+
+  listEl.innerHTML = `<h4>Conciliações salvas</h4>${avisoFiltro}` + itemsFiltrados.map(it => `
     <div class="saved-item">
       <div>
         ${it.snap.contaLabel ? `<span class="badge-id" style="margin-bottom:3px;display:inline-block;">🏦 ${it.snap.contaLabel}</span><br>` : ''}
@@ -2452,6 +2477,7 @@ async function refreshSavedSessionsList(){
       </div>
     </div>
   `).join('');
+  document.getElementById('cfgVerTodasContasSessoes').addEventListener('change', refreshSavedSessionsList);
   listEl.querySelectorAll('.btn-resume').forEach(btn=>{
     btn.addEventListener('click', async (e)=>{
       const key = e.target.dataset.key;
@@ -5433,12 +5459,12 @@ document.querySelectorAll('.btn-periodo-seta').forEach(btn => {
 });
 
 /* ============================= INIT ============================= */
-refreshSavedSessionsList();
 carregarProjetosHistorico();
 carregarContasConhecidas().then(() => {
   atualizarSeletorContasFechamento();
   renderListaContasCadastradas();
   renderContaUploadSelector();
+  refreshSavedSessionsList();
 });
 document.getElementById('btnCadastrarConta').addEventListener('click', cadastrarContaManual);
 document.getElementById('btnGerenciarContas').addEventListener('click', () => {
