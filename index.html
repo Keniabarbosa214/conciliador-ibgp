@@ -4105,7 +4105,7 @@ function renderBalancePanel(totalDebitosPeriodo, totalCreditosPeriodo){
   `;
 
   const headerTag = document.getElementById('headerTag');
-  const atualizarHeaderTag = () => { if(headerTag) headerTag.textContent = `${contaAtualLabel} · extrato × relatório de cobranças · [diagnóstico: "${contaAtualKey}"]`; };
+  const atualizarHeaderTag = () => { if(headerTag) headerTag.textContent = `${contaAtualLabel} · extrato × relatório de cobranças · [diagnóstico: "${contaAtualKey}" | contaEhATI=${contaEhATI}]`; };
   atualizarHeaderTag();
 
   const selConta = document.getElementById('contaBancariaSelect');
