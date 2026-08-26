@@ -4473,7 +4473,10 @@ function renderResults(){
       ...debits.map(d => ({ tipo:'saida', date:d.date, amount:Math.abs(d.amount), memo:d.memo, nome: d.fornecedor || d.name,
         status: d.estornado ? '🔄 Estornado (pagamento não efetivado)' : d.used ? 'Conciliado' : (d.identStatus==='auto' ? 'Identificado (banco)' : d.identStatus==='manual' ? 'Identificado manualmente' : 'Pendente') })),
       ...credits.map(c => ({ tipo:'entrada', date:c.date, amount:Math.abs(c.amount), memo:c.memo, nome:c.cliente,
-        status: c.isDevolucao ? '🔄 Devolução (não é receita)' : 'Recebimento' }))
+        status: isMesmaTitularidade(c.memo) ? '🔄 Movimento interno (mesma titularidade)' :
+          isResgateAplicacao(c.memo) ? '🔄 Movimento interno (resgate)' :
+          isDevolucao(c.memo) ? '🔄 Devolução (não é receita)' :
+          c.used ? 'Conciliado' : (c.cliente ? 'Identificado manualmente' : 'Pendente') }))
     ].sort((a,b)=> b.date - a.date).filter(m => {
       if(!searchTerm) return true;
       const hay = normalize([m.memo, m.nome].join(' '));
