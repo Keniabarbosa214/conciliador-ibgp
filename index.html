@@ -327,7 +327,7 @@
     color:var(--ink-soft); padding:8px 10px; border-bottom:2px solid var(--line); background:var(--paper-2);
     position:sticky; top:0;
   }
-  table.results td{ padding:9px 10px; border-bottom:1px solid #EDE7D6; vertical-align:top; }
+  table.results td{ padding:9px 10px; border-bottom:1px solid #EDE7D6; vertical-align:top; overflow:visible; }
   table.results tr:nth-child(even) td{ background:#FBFAF5; }
   table.results .valor{ font-family:'IBM Plex Mono',monospace; text-align:right; white-space:nowrap; }
   table.results .data{ font-family:'IBM Plex Mono',monospace; white-space:nowrap; }
@@ -374,7 +374,7 @@
 
   .cc-ac-wrap{ position:relative; }
   .cc-ac-list{
-    display:none; position:absolute; top:100%; left:0; right:0; z-index:50;
+    display:none; position:absolute; top:100%; left:0; right:0; z-index:500;
     background:#fff; border:1px solid var(--navy); border-top:none; border-radius:0 0 4px 4px;
     max-height:220px; overflow-y:auto; box-shadow:0 4px 10px rgba(0,0,0,.15);
   }
