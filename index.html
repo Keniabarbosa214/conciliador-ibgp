@@ -3009,6 +3009,28 @@ function parseXLSExtrato(rows){
   return formatoNovo ? parseXLSExtratoFormatoNovo(rows) : parseXLSExtratoFormatoAntigo(rows);
 }
 
+// O número "#NNN" (ex: "Pagamento IBGP #1694") normalmente é único, mas boletos reemitidos ou
+// numerações reaproveitadas podem repeti-lo em pagamentos DIFERENTES (valores diferentes). Sem
+// tratar isso, os dois lançamentos ganhavam o MESMO identificador e um "roubava" a identificação
+// salva do outro a cada reprocessamento. Depois que a lista inteira já foi montada, detecta esses
+// casos e desempata pelo valor — só nos grupos onde realmente há colisão, preservando o
+// identificador de sempre (idpag-NNN puro) em todos os outros casos, sem quebrar nada já salvo.
+function corrigirColisoesDeIdPagamento(out){
+  const porFitid = new Map();
+  out.forEach(t => {
+    if(!t.fitid || t.fitid.indexOf('idpag-') !== 0) return;
+    if(!porFitid.has(t.fitid)) porFitid.set(t.fitid, []);
+    porFitid.get(t.fitid).push(t);
+  });
+  porFitid.forEach((grupo, fitidOriginal) => {
+    if(grupo.length < 2) return; // sem colisão, nada a fazer
+    grupo.forEach(t => {
+      t.fitid = (fitidOriginal + '-' + Math.round(Math.abs(t.amount)*100)).replace(/[^a-z0-9-]/gi, '');
+    });
+  });
+  return out;
+}
+
 function parseXLSExtratoFormatoNovo(rows){
   const out = [];
   const saldosDiarios = [];
@@ -3068,7 +3090,7 @@ function parseXLSExtratoFormatoNovo(rows){
     });
     idx++;
   }
-  return { transactions: out, saldosDiarios, saldoAnterior, futuros };
+  return { transactions: corrigirColisoesDeIdPagamento(out), saldosDiarios, saldoAnterior, futuros };
 }
 
 function parseXLSExtratoFormatoAntigo(rows){
@@ -3159,7 +3181,7 @@ function parseXLSExtratoFormatoAntigo(rows){
     }
     i = j;
   }
-  return { transactions: out, saldosDiarios, saldoAnterior, futuros };
+  return { transactions: corrigirColisoesDeIdPagamento(out), saldosDiarios, saldoAnterior, futuros };
 }
 
 // Extrato de notas fiscais emitidas (NFS-e nacional, aba "Relação").
