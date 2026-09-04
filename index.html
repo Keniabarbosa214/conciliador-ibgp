@@ -1580,7 +1580,10 @@ async function loginMicrosoft(){
   if(!app){ alert('Não consegui carregar o login da Microsoft (verifique sua internet e recarregue a página).'); return; }
   try{
     localStorage.setItem('conciliador_pediu_login', '1');
-    await app.loginRedirect({ scopes: ['Files.ReadWrite', 'User.Read'] });
+    // "select_account" força a Microsoft a sempre mostrar a lista de contas — sem isso, se o
+    // navegador já tiver uma sessão ativa, ela reconecta sozinha com a mesma conta de antes,
+    // sem dar chance de escolher outra.
+    await app.loginRedirect({ scopes: ['Files.ReadWrite', 'User.Read'], prompt: 'select_account' });
     // a página inteira vai navegar pro login da Microsoft agora — nada mais roda depois desta linha
   }catch(e){
     console.error(e);
@@ -1588,12 +1591,26 @@ async function loginMicrosoft(){
   }
 }
 
-function logoutMicrosoft(){
+async function logoutMicrosoft(){
   modoCompartilhado = false;
-  msalAccount = null;
   cloudDriveId = null; cloudItemId = null; cloudEtag = null; cloudDataCache = null;
+  const contaQueEstavaLogada = msalAccount;
+  msalAccount = null;
   atualizarPainelNuvem();
   refreshSavedSessionsList();
+  // Sem isso, só a memória interna do sistema esquecia a conta — o navegador continuava com a
+  // sessão da Microsoft ativa, e ao clicar "Entrar" de novo, ela reconectava sozinha com a
+  // MESMA conta, sem deixar escolher outra. logoutRedirect desconecta de verdade e navega de
+  // volta pra esta página.
+  try{
+    const app = await ensureMsalReady();
+    if(app && contaQueEstavaLogada){
+      await app.logoutRedirect({ account: contaQueEstavaLogada, postLogoutRedirectUri: window.location.href });
+      // a página vai navegar agora — nada mais roda depois desta linha
+    }
+  }catch(e){
+    console.error('Erro ao desconectar da Microsoft:', e);
+  }
 }
 
 async function getGraphToken(){
