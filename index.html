@@ -1840,18 +1840,26 @@ async function storageSet(key, value){
 }
 async function storageGet(key){
   if(modoCompartilhado){
+    let daNuvem = null;
     try{
       if(!cloudDataCache) await cloudFetch();
-      if(cloudDataCache.sessions[key]) return cloudDataCache.sessions[key];
+      daNuvem = cloudDataCache.sessions[key] || null;
     }catch(e){ /* nuvem indisponível — cai pro fallback local abaixo, sem perder a chance de achar */ }
-    // Não achou na nuvem (ou nem conseguiu consultar) — confere se existe uma cópia local dessa
-    // sessão específica, guardada como rede de segurança de uma vez que o salvamento na nuvem
-    // tenha falhado antes. Sem isso, um trabalho salvo só localmente pareceria "não existir".
+    // Sempre confere também a cópia local — mesmo quando a nuvem respondeu com alguma coisa.
+    // Sem isso, se um salvamento anterior tivesse falhado silenciosamente na nuvem (token
+    // expirado, sem internet no momento), a versão antiga da nuvem "vencia" e apagava da tela
+    // uma edição que só tinha sido salva localmente como rede de segurança.
+    let doLocal = null;
     try{
       const raw = localStorage.getItem(STORAGE_NS+key);
-      if(raw) return JSON.parse(raw);
+      if(raw) doLocal = JSON.parse(raw);
     }catch(e){}
-    return null;
+    if(daNuvem && doLocal){
+      const dataNuvem = new Date(daNuvem.savedAt || 0);
+      const dataLocal = new Date(doLocal.savedAt || 0);
+      return dataLocal > dataNuvem ? doLocal : daNuvem;
+    }
+    return daNuvem || doLocal || null;
   }
   try{
     if(window.storage && typeof window.storage.get === 'function'){
