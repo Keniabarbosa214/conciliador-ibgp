@@ -1378,13 +1378,28 @@ async function repararIdentificadoresSalvos(){
     const mapaAntigoParaNovo = {};
     let mudouAlgo = false;
 
+    const fitidsAntigosDebits = new Map();
+    const fitidsAntigosCredits = new Map();
     (snap.debits||[]).forEach(d => {
-      const novoFitid = gerarFitidReparado(d.date, d.amount, d.memo, contadorMap);
-      if(novoFitid !== d.fitid){ mapaAntigoParaNovo[d.fitid] = novoFitid; d.fitid = novoFitid; mudouAlgo = true; fitidsTrocados++; }
+      fitidsAntigosDebits.set(d, d.fitid);
+      d.fitid = gerarFitidReparado(d.date, d.amount, d.memo, contadorMap);
     });
     (snap.credits||[]).forEach(c => {
-      const novoFitid = gerarFitidReparado(c.date, c.amount, c.memo, contadorMap);
-      if(novoFitid !== c.fitid){ mapaAntigoParaNovo[c.fitid] = novoFitid; c.fitid = novoFitid; mudouAlgo = true; fitidsTrocados++; }
+      fitidsAntigosCredits.set(c, c.fitid);
+      c.fitid = gerarFitidReparado(c.date, c.amount, c.memo, contadorMap);
+    });
+    // Aplica a MESMA correção usada ao processar arquivo novo: se o mesmo "#NNN" acabou gerando
+    // o mesmo identificador em dois lançamentos DIFERENTES (valores diferentes) dentro da mesma
+    // sessão salva, desempata pelo valor — sem isso, o reparo recriava a colisão de novo.
+    corrigirColisoesDeIdPagamento(snap.debits||[]);
+    corrigirColisoesDeIdPagamento(snap.credits||[]);
+    (snap.debits||[]).forEach(d => {
+      const fitidAntigo = fitidsAntigosDebits.get(d);
+      if(d.fitid !== fitidAntigo){ mapaAntigoParaNovo[fitidAntigo] = d.fitid; mudouAlgo = true; fitidsTrocados++; }
+    });
+    (snap.credits||[]).forEach(c => {
+      const fitidAntigo = fitidsAntigosCredits.get(c);
+      if(c.fitid !== fitidAntigo){ mapaAntigoParaNovo[fitidAntigo] = c.fitid; mudouAlgo = true; fitidsTrocados++; }
     });
     // Atualiza as referências de vínculo (relatório → débito, nota fiscal → crédito) pra
     // continuarem apontando pro lançamento certo depois da troca de identificador.
