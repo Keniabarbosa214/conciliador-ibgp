@@ -3386,6 +3386,14 @@ async function runReconciliation(opts){
   const prevCreditsByFitid = {};
   const prevDebitsByConteudo = {};
   const prevCreditsByConteudo = {};
+  // Chave mais "solta": só data+valor, sem o texto do memo. Serve de último recurso quando o
+  // memo vier com alguma diferença sutil entre duas exportações do mesmo extrato (acentuação,
+  // espaço a mais) — só é usada quando existe UM ÚNICO candidato pra aquela data+valor (se
+  // houver mais de um, fica ambíguo demais pra arriscar, e a busca por conteúdo completo segue
+  // sendo a prioridade).
+  const chaveValorData = (dateObj, amount) => (dateObj ? new Date(dateObj).toISOString().slice(0,10) : '') + '|' + Math.round(amount*100);
+  const prevDebitsByValorData = {};
+  const prevCreditsByValorData = {};
   const prevReceberByNumeroNF = {};
   if(preservar){
     report.forEach(r => { if(r.idReport) prevReportByID[String(r.idReport)] = r; });
@@ -3395,6 +3403,8 @@ async function runReconciliation(opts){
       if(dResolvido){
         const ck = chaveConteudoTx(d.date, d.amount, d.memo);
         (prevDebitsByConteudo[ck] = prevDebitsByConteudo[ck] || []).push(d);
+        const cvd = chaveValorData(d.date, d.amount);
+        (prevDebitsByValorData[cvd] = prevDebitsByValorData[cvd] || []).push(d);
       }
     });
     credits.forEach(c => {
@@ -3403,6 +3413,8 @@ async function runReconciliation(opts){
       if(cResolvido){
         const ck = chaveConteudoTx(c.date, c.amount, c.memo);
         (prevCreditsByConteudo[ck] = prevCreditsByConteudo[ck] || []).push(c);
+        const cvd = chaveValorData(c.date, c.amount);
+        (prevCreditsByValorData[cvd] = prevCreditsByValorData[cvd] || []).push(c);
       }
     });
     reportReceber.forEach(n => { if(n.numeroNF) prevReceberByNumeroNF[String(n.numeroNF)] = n; });
@@ -3431,6 +3443,9 @@ async function runReconciliation(opts){
           const ck = chaveConteudoTx(d.date, d.amount, d.memo);
           const arr = prevDebitsByConteudo[ck] = prevDebitsByConteudo[ck] || [];
           if(!arr.some(x => x.fitid === d.fitid)) arr.push(d);
+          const cvd = chaveValorData(d.date, d.amount);
+          const arrVd = prevDebitsByValorData[cvd] = prevDebitsByValorData[cvd] || [];
+          if(!arrVd.some(x => x.fitid === d.fitid)) arrVd.push(d);
         });
         (snap.credits||[]).forEach(c => {
           const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
@@ -3438,6 +3453,9 @@ async function runReconciliation(opts){
           const ck = chaveConteudoTx(c.date, c.amount, c.memo);
           const arr = prevCreditsByConteudo[ck] = prevCreditsByConteudo[ck] || [];
           if(!arr.some(x => x.fitid === c.fitid)) arr.push(c);
+          const cvd = chaveValorData(c.date, c.amount);
+          const arrVd = prevCreditsByValorData[cvd] = prevCreditsByValorData[cvd] || [];
+          if(!arrVd.some(x => x.fitid === c.fitid)) arrVd.push(c);
         });
         // Linhas do relatório que já estavam vinculadas a um pagamento (ou marcadas como "sem
         // correspondência" de propósito) em outra sessão salva — reconstrói o vínculo usando o
@@ -3590,7 +3608,11 @@ async function runReconciliation(opts){
   if(preservar){
     debits.forEach(d => {
       const candidatos = prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
-      const prev = prevDebitsByFitid[d.fitid] || (candidatos && candidatos[debitOcorrencia.get(d)]);
+      let prev = prevDebitsByFitid[d.fitid] || (candidatos && candidatos[debitOcorrencia.get(d)]);
+      if(!prev){
+        const candidatosVd = prevDebitsByValorData[chaveValorData(d.date, d.amount)];
+        if(candidatosVd && candidatosVd.length === 1) prev = candidatosVd[0];
+      }
       if(prev){
         d.fornecedor = prev.fornecedor;
         d.centroCusto = prev.centroCusto;
@@ -3601,7 +3623,11 @@ async function runReconciliation(opts){
     });
     credits.forEach(c => {
       const candidatos = prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)];
-      const prev = prevCreditsByFitid[c.fitid] || (candidatos && candidatos[creditOcorrencia.get(c)]);
+      let prev = prevCreditsByFitid[c.fitid] || (candidatos && candidatos[creditOcorrencia.get(c)]);
+      if(!prev){
+        const candidatosVd = prevCreditsByValorData[chaveValorData(c.date, c.amount)];
+        if(candidatosVd && candidatosVd.length === 1) prev = candidatosVd[0];
+      }
       if(prev){
         c.cliente = prev.cliente;
         c.nf = prev.nf;
@@ -3787,7 +3813,11 @@ async function runReconciliation(opts){
     });
     debits.forEach(d => {
       const candidatosD = prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
-      const prev = prevDebitsByFitid[d.fitid] || (candidatosD && candidatosD[debitOcorrencia.get(d)]);
+      let prev = prevDebitsByFitid[d.fitid] || (candidatosD && candidatosD[debitOcorrencia.get(d)]);
+      if(!prev){
+        const candidatosVd = prevDebitsByValorData[chaveValorData(d.date, d.amount)];
+        if(candidatosVd && candidatosVd.length === 1) prev = candidatosVd[0];
+      }
       if(prev && prev.identStatus === 'manual') d.identStatus = 'manual';
     });
   }
