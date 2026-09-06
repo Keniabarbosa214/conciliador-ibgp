@@ -3606,13 +3606,20 @@ async function runReconciliation(opts){
   // computarIndiceOcorrencia acima).
   const debitOcorrencia = computarIndiceOcorrencia(debits, d => chaveConteudoTx(d.date, d.amount, d.memo));
   const creditOcorrencia = computarIndiceOcorrencia(credits, c => chaveConteudoTx(c.date, c.amount, c.memo));
+  // Mesma lógica de posição, só que pra chave mais solta (valor+data, ignorando o memo) — cobre
+  // o caso em que o texto do memo mudou entre reprocessamentos por qualquer motivo (inclusive
+  // quando duas cópias salvas em momentos diferentes trataram a mesma duplicidade de #NNN de
+  // formas diferentes). Quando há mais de um candidato pra essa data+valor, a posição decide
+  // qual é qual — só cai pro valor+data puro (sem posição) quando existe um único candidato.
+  const debitOcorrenciaVd = computarIndiceOcorrencia(debits, d => chaveValorData(d.date, d.amount));
+  const creditOcorrenciaVd = computarIndiceOcorrencia(credits, c => chaveValorData(c.date, c.amount));
   if(preservar){
     debits.forEach(d => {
       const candidatos = prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
       let prev = prevDebitsByFitid[d.fitid] || (candidatos && candidatos[debitOcorrencia.get(d)]);
       if(!prev){
         const candidatosVd = prevDebitsByValorData[chaveValorData(d.date, d.amount)];
-        if(candidatosVd && candidatosVd.length === 1) prev = candidatosVd[0];
+        if(candidatosVd) prev = candidatosVd.length === 1 ? candidatosVd[0] : candidatosVd[debitOcorrenciaVd.get(d)];
       }
       if(prev){
         d.fornecedor = prev.fornecedor;
@@ -3627,7 +3634,7 @@ async function runReconciliation(opts){
       let prev = prevCreditsByFitid[c.fitid] || (candidatos && candidatos[creditOcorrencia.get(c)]);
       if(!prev){
         const candidatosVd = prevCreditsByValorData[chaveValorData(c.date, c.amount)];
-        if(candidatosVd && candidatosVd.length === 1) prev = candidatosVd[0];
+        if(candidatosVd) prev = candidatosVd.length === 1 ? candidatosVd[0] : candidatosVd[creditOcorrenciaVd.get(c)];
       }
       if(prev){
         c.cliente = prev.cliente;
@@ -3817,7 +3824,7 @@ async function runReconciliation(opts){
       let prev = prevDebitsByFitid[d.fitid] || (candidatosD && candidatosD[debitOcorrencia.get(d)]);
       if(!prev){
         const candidatosVd = prevDebitsByValorData[chaveValorData(d.date, d.amount)];
-        if(candidatosVd && candidatosVd.length === 1) prev = candidatosVd[0];
+        if(candidatosVd) prev = candidatosVd.length === 1 ? candidatosVd[0] : candidatosVd[debitOcorrenciaVd.get(d)];
       }
       if(prev && prev.identStatus === 'manual') d.identStatus = 'manual';
     });
