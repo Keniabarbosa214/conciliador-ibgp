@@ -5356,7 +5356,11 @@ function renderCriarLancamento(fitid, tipo){
 
 function confirmarCriarLancamentoSaida(fitid){
   const d = debits.find(x => x.fitid === fitid);
-  if(!d) return;
+  if(!d){
+    alert('⚠️ Não consegui encontrar esse lançamento internamente (o identificador dele pode ter mudado desde que a tela foi carregada). Recarregue a página (Ctrl+F5), reabra essa conciliação e tente identificar de novo — sem isso, a confirmação não tem efeito nenhum, mesmo sem mostrar erro.');
+    console.error('confirmarCriarLancamentoSaida: fitid não encontrado em debits ->', fitid);
+    return;
+  }
   const fornecedor = document.getElementById('criarForn-'+fitid).value.trim();
   const centroCusto = document.getElementById('criarCC-'+fitid).value;
   const projeto = document.getElementById('criarProj-'+fitid).value;
@@ -5372,7 +5376,11 @@ function confirmarCriarLancamentoSaida(fitid){
 
 function confirmarCriarLancamentoEntrada(fitid){
   const c = credits.find(x => x.fitid === fitid);
-  if(!c) return;
+  if(!c){
+    alert('⚠️ Não consegui encontrar esse lançamento internamente (o identificador dele pode ter mudado desde que a tela foi carregada). Recarregue a página (Ctrl+F5), reabra essa conciliação e tente identificar de novo — sem isso, a confirmação não tem efeito nenhum, mesmo sem mostrar erro.');
+    console.error('confirmarCriarLancamentoEntrada: fitid não encontrado em credits ->', fitid);
+    return;
+  }
   const cliente = document.getElementById('criarCliente-'+fitid).value.trim();
   const nf = document.getElementById('criarNF-'+fitid).value.trim();
   const centroCusto = document.getElementById('criarCCReceb-'+fitid).value;
