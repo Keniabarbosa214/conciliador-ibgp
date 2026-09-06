@@ -1351,7 +1351,7 @@ function linhaEmMaiusculo(obj){
 
 function gerarFitidReparado(dateVal, amount, memo, contadorMap){
   const idPagamento = extractPaymentId(memo);
-  if(idPagamento) return ('idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
+  if(idPagamento) return ('idpag-' + idPagamento + '-' + Math.round(Math.abs(amount)*100)).replace(/[^a-z0-9-]/gi, '');
   const chave = chaveConteudoTx(dateVal, amount, memo);
   const ocorrencia = (contadorMap.get(chave) || 0) + 1;
   contadorMap.set(chave, ocorrencia);
@@ -2978,11 +2978,13 @@ function extractPaymentId(text){
 // foi confirmado antes, mesmo sendo o mesmo pagamento. Usa um contador só pra desempatar
 // duplicatas genuínas (dois lançamentos idênticos no mesmo dia).
 function gerarFitidEstavel(prefixo, dataStr, num, fullMemo, documento, contadorMap){
-  // Quando o memo tem um número de pagamento (ex: "Pagamento IBGP #945"), esse número já é
-  // genuinamente único — usa ele direto, sem contador de ocorrência.
+  // Quando o memo tem um número de pagamento (ex: "Pagamento IBGP #945"), inclui também o
+  // valor no identificador — o número sozinho às vezes se repete em pagamentos DIFERENTES
+  // (boleto reemitido, numeração reaproveitada), e sem o valor junto, dois lançamentos
+  // diferentes acabavam com o mesmíssimo identificador, cada um "roubando" o outro.
   const idPagamento = extractPaymentId(fullMemo);
   if(idPagamento){
-    return ('idpag-' + idPagamento).replace(/[^a-z0-9-]/gi, '');
+    return ('idpag-' + idPagamento + '-' + Math.round(Math.abs(num)*100)).replace(/[^a-z0-9-]/gi, '');
   }
   // Pra tudo o mais, usa EXATAMENTE a mesma lógica da ferramenta de reparo (gerarFitidReparado):
   // só data + valor + memo, SEM o "documento" da coluna do arquivo (que não é garantidamente
