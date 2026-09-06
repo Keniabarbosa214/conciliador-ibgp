@@ -1805,10 +1805,23 @@ async function storageSet(key, value){
       try{
         await cloudSave();
       }catch(e1){
-        // ainda grande demais mesmo depois da limpeza normal — aperta bem mais o limite
-        // (guardando bruto só da sessão mais recente) antes de desistir de vez.
-        podarPorTamanho(cloudDataCache.sessions, 800000);
-        await cloudSave();
+        // Se foi conflito de verdade (arquivo mudou por fora entre a leitura e a escrita), a
+        // própria cloudSave já buscou a versão mais nova — tenta gravar de novo com ela ANTES
+        // de desistir, em vez de já mostrar erro pra pessoa numa situação que se resolve sozinha.
+        if(e1.message.indexOf('Outra pessoa salvou') === 0){
+          try{
+            cloudDataCache.sessions[key] = value; // reaplica esta edição por cima da versão nova
+            await cloudSave();
+          }catch(e2){
+            podarPorTamanho(cloudDataCache.sessions, 800000);
+            await cloudSave();
+          }
+        } else {
+          // ainda grande demais mesmo depois da limpeza normal — aperta bem mais o limite
+          // (guardando bruto só da sessão mais recente) antes de desistir de vez.
+          podarPorTamanho(cloudDataCache.sessions, 800000);
+          await cloudSave();
+        }
       }
     }catch(e){
       falhouNaNuvem = true;
@@ -2049,9 +2062,20 @@ function deserializeSession(snap){
   }));
 }
 
+// Fila de salvamento: sem isso, se dois campos forem editados rapidinho (ex: tabulando por
+// vários campos de Centro de Custo/Projeto em sequência), cada edição dispara seu próprio
+// salvamento, e esses salvamentos podem correr em PARALELO — o primeiro é aceito, mas o
+// segundo, que começou usando a versão antiga do arquivo (antes do primeiro terminar), é
+// rejeitado com "outra pessoa salvou por cima", mesmo sendo a MESMA pessoa, só rápida demais.
+// Encadear cada novo salvamento depois do anterior terminar resolve isso de vez.
+let colaDeSalvamento = Promise.resolve();
 async function persistCurrentSession(){
   if(!currentSessionKey) return;
-  await storageSet(currentSessionKey, serializeSession());
+  const chave = currentSessionKey;
+  const dados = serializeSession();
+  const minhaVez = colaDeSalvamento.then(() => storageSet(chave, dados));
+  colaDeSalvamento = minhaVez.catch(() => {}); // a fila nunca emperra, mesmo se uma tentativa falhar
+  await minhaVez;
   lastSavedAt = new Date();
   const el = document.getElementById('saveIndicator');
   if(el) el.textContent = '💾 Salvo às ' + lastSavedAt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
