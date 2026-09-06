@@ -2964,6 +2964,26 @@ function chaveConteudoTx(dateObj, amount, memo){
   return dataStr + '|' + Math.round(amount*100) + '|' + slugify(memo||'').slice(0,60);
 }
 
+// Quando duas transações REAIS e DIFERENTES têm a mesma data+valor+texto de memo (uma
+// coincidência que acontece, principalmente com PIX de valores redondos), a chave de conteúdo
+// sozinha não consegue distingui-las. Sem isso, o sistema achava que era só "a mesma", guardava
+// a identificação de só uma delas, e a outra perdia o que já tinha sido identificado a cada
+// reprocessamento. Esta função calcula, pra cada lançamento, sua posição (0, 1, 2...) dentro do
+// grupo de duplicatas idênticas — assumindo que a ORDEM RELATIVA entre elas se mantém estável
+// entre reprocessamentos (o banco não costuma embaralhar só as duplicatas entre si), a
+// restauração casa a 1ª duplicata de agora com a 1ª duplicata salva, a 2ª com a 2ª, etc.
+function computarIndiceOcorrencia(lista, chaveFn){
+  const contadores = new Map();
+  const indices = new Map();
+  lista.forEach(item => {
+    const k = chaveFn(item);
+    const idx = contadores.get(k) || 0;
+    indices.set(item, idx);
+    contadores.set(k, idx+1);
+  });
+  return indices;
+}
+
 function parseOFX(text){
   const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/g) || [];
   const get = (block, tag) => {
@@ -3332,11 +3352,19 @@ async function runReconciliation(opts){
     report.forEach(r => { if(r.idReport) prevReportByID[String(r.idReport)] = r; });
     debits.forEach(d => {
       prevDebitsByFitid[d.fitid] = d;
-      prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)] = d;
+      const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
+      if(dResolvido){
+        const ck = chaveConteudoTx(d.date, d.amount, d.memo);
+        (prevDebitsByConteudo[ck] = prevDebitsByConteudo[ck] || []).push(d);
+      }
     });
     credits.forEach(c => {
       prevCreditsByFitid[c.fitid] = c;
-      prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)] = c;
+      const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
+      if(cResolvido){
+        const ck = chaveConteudoTx(c.date, c.amount, c.memo);
+        (prevCreditsByConteudo[ck] = prevCreditsByConteudo[ck] || []).push(c);
+      }
     });
     reportReceber.forEach(n => { if(n.numeroNF) prevReceberByNumeroNF[String(n.numeroNF)] = n; });
 
@@ -3359,18 +3387,18 @@ async function runReconciliation(opts){
         const snap = await storageGet(key);
         if(!snap) continue;
         (snap.debits||[]).forEach(d => {
-          const ck = chaveConteudoTx(d.date, d.amount, d.memo);
-          const existente = prevDebitsByConteudo[ck];
           const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
-          const existenteResolvido = existente && (existente.used || existente.identStatus === 'auto' || existente.identStatus === 'manual' || existente.estornado);
-          if(!existente || (!existenteResolvido && dResolvido)) prevDebitsByConteudo[ck] = d;
+          if(!dResolvido) return; // só candidatos resolvidos ajudam a restauração
+          const ck = chaveConteudoTx(d.date, d.amount, d.memo);
+          const arr = prevDebitsByConteudo[ck] = prevDebitsByConteudo[ck] || [];
+          if(!arr.some(x => x.fitid === d.fitid)) arr.push(d);
         });
         (snap.credits||[]).forEach(c => {
-          const ck = chaveConteudoTx(c.date, c.amount, c.memo);
-          const existente = prevCreditsByConteudo[ck];
           const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
-          const existenteResolvido = existente && (existente.used || !!existente.cliente || isResgateAplicacao(existente.memo) || isDevolucao(existente.memo) || isMesmaTitularidade(existente.memo));
-          if(!existente || (!existenteResolvido && cResolvido)) prevCreditsByConteudo[ck] = c;
+          if(!cResolvido) return;
+          const ck = chaveConteudoTx(c.date, c.amount, c.memo);
+          const arr = prevCreditsByConteudo[ck] = prevCreditsByConteudo[ck] || [];
+          if(!arr.some(x => x.fitid === c.fitid)) arr.push(c);
         });
         // Linhas do relatório que já estavam vinculadas a um pagamento (ou marcadas como "sem
         // correspondência" de propósito) em outra sessão salva — reconstrói o vínculo usando o
@@ -3515,9 +3543,15 @@ async function runReconciliation(opts){
   // Restaura o que já tinha sido identificado/classificado manualmente antes deste reprocessamento.
   // Tenta primeiro pelo fitid (mais preciso); se não achar (ex: sessão salva antes da troca do
   // jeito de gerar o fitid), tenta pela ponte de conteúdo — assim nada se perde na transição.
+  // Quando há mais de uma duplicata idêntica (mesma data+valor+memo), usa a posição de cada uma
+  // pra casar com a duplicata certa salva antes, em vez de sempre pegar a mesma (veja
+  // computarIndiceOcorrencia acima).
+  const debitOcorrencia = computarIndiceOcorrencia(debits, d => chaveConteudoTx(d.date, d.amount, d.memo));
+  const creditOcorrencia = computarIndiceOcorrencia(credits, c => chaveConteudoTx(c.date, c.amount, c.memo));
   if(preservar){
     debits.forEach(d => {
-      const prev = prevDebitsByFitid[d.fitid] || prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
+      const candidatos = prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
+      const prev = prevDebitsByFitid[d.fitid] || (candidatos && candidatos[debitOcorrencia.get(d)]);
       if(prev){
         d.fornecedor = prev.fornecedor;
         d.centroCusto = prev.centroCusto;
@@ -3527,7 +3561,8 @@ async function runReconciliation(opts){
       }
     });
     credits.forEach(c => {
-      const prev = prevCreditsByFitid[c.fitid] || prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)];
+      const candidatos = prevCreditsByConteudo[chaveConteudoTx(c.date, c.amount, c.memo)];
+      const prev = prevCreditsByFitid[c.fitid] || (candidatos && candidatos[creditOcorrencia.get(c)]);
       if(prev){
         c.cliente = prev.cliente;
         c.nf = prev.nf;
@@ -3712,7 +3747,8 @@ async function runReconciliation(opts){
       }
     });
     debits.forEach(d => {
-      const prev = prevDebitsByFitid[d.fitid] || prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
+      const candidatosD = prevDebitsByConteudo[chaveConteudoTx(d.date, d.amount, d.memo)];
+      const prev = prevDebitsByFitid[d.fitid] || (candidatosD && candidatosD[debitOcorrencia.get(d)]);
       if(prev && prev.identStatus === 'manual') d.identStatus = 'manual';
     });
   }
