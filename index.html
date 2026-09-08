@@ -2269,70 +2269,89 @@ async function gerarFechamentoMensal(){
   const notasMes = new Map();
   let sessoesUsadas = 0;
 
+  // Carrega todas as sessões que batem com a conta filtrada, junto com sua data de salvamento.
+  const sessoesCarregadas = [];
   for(const key of keys){
     const snap = await storageGet(key);
     if(!snap) continue;
-    // Compara pelo NOME da conta (mais estável), não pela chave técnica — essa chave já mudou de
-    // formato algumas vezes conforme o sistema evoluiu, então comparar só por ela descartava
-    // sessões salvas de formatos antigos, mesmo sendo da conta certa.
     if(contaFiltro){
       const labelFiltro = contasConhecidas[contaFiltro] || contaFiltro;
       const bateConta = (snap.contaKey||'') === contaFiltro || (snap.contaLabel||'') === labelFiltro;
       if(!bateConta) continue;
     }
+    sessoesCarregadas.push({ key, snap, savedAtMs: new Date(snap.savedAt||0).getTime() });
+  }
+
+  // Em vez de tentar mesclar lançamento por lançamento entre todas as sessões salvas (o que
+  // falhava quando o mesmo lançamento tinha alguma diferença sutil entre uma sessão e outra,
+  // deixando pra trás versões antigas e não resolvidas), decide, PRA CADA DIA, qual foi a
+  // sessão salva mais recentemente que cobre aquele dia — e usa SÓ os dados dessa sessão pra
+  // aquele dia específico. Isso evita misturar uma foto antiga (de antes de você conciliar)
+  // com uma foto nova do mesmo dia: cada dia usa uma única fonte, sempre a mais atual.
+  const melhorSessaoPorDia = new Map();
+  const registrarDia = (dataVal, sessaoIdx) => {
+    if(!dentroDoMes(dataVal)) return;
+    const diaISO = new Date(dataVal).toISOString().slice(0,10);
+    const atual = melhorSessaoPorDia.get(diaISO);
+    if(!atual || sessoesCarregadas[sessaoIdx].savedAtMs > sessoesCarregadas[atual].savedAtMs){
+      melhorSessaoPorDia.set(diaISO, sessaoIdx);
+    }
+  };
+  sessoesCarregadas.forEach((s, idx) => {
+    (s.snap.debits||[]).forEach(d => registrarDia(d.date, idx));
+    (s.snap.credits||[]).forEach(c => registrarDia(c.date, idx));
+  });
+
+  sessoesCarregadas.forEach((s, idx) => {
+    const snap = s.snap;
     let usouEssaSessao = false;
-    // Quando o mesmo lançamento/linha aparece em mais de uma sessão salva (comum: relatório de
-    // cobranças e notas fiscais são reexportados de forma cumulativa, então a mesma linha aparece
-    // de novo em cada dia), sempre PREFERE a versão já identificada/conciliada — nunca deixa uma
-    // sessão mais antiga (ou só reprocessada depois) apagar uma confirmação que já existia.
     (snap.debits||[]).forEach(d => {
       if(!dentroDoMes(d.date)) return;
-      // Agrupa pelo CONTEÚDO (data+valor+memo), não pelo fitid — o fitid já mudou de formato
-      // algumas vezes conforme o sistema evoluiu ao longo do dia, então duas sessões salvas em
-      // momentos diferentes podiam ter fitids diferentes pro MESMO lançamento real, fazendo ele
-      // aparecer duas vezes aqui (uma pendente de uma sessão antiga, outra já resolvida de uma
-      // mais nova) em vez de ser reconhecido como a mesma coisa.
+      const diaISO = new Date(d.date).toISOString().slice(0,10);
+      if(melhorSessaoPorDia.get(diaISO) !== idx) return; // esse dia tem uma sessão mais recente — ignora esta
       const chaveD = chaveConteudoTx(d.date, d.amount, d.memo);
-      const existente = debitosMes.get(chaveD);
-      const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
-      const existenteResolvido = existente && (existente.used || existente.identStatus === 'auto' || existente.identStatus === 'manual' || existente.estornado);
-      if(!existente || (!existenteResolvido && dResolvido)) debitosMes.set(chaveD, d);
+      const debitOcorrenciaMes = debitosMes.get(chaveD+'#count') || 0;
+      debitosMes.set(chaveD + '|' + debitOcorrenciaMes, d);
+      debitosMes.set(chaveD+'#count', debitOcorrenciaMes+1);
       usouEssaSessao = true;
     });
     (snap.credits||[]).forEach(c => {
       if(!dentroDoMes(c.date)) return;
+      const diaISO = new Date(c.date).toISOString().slice(0,10);
+      if(melhorSessaoPorDia.get(diaISO) !== idx) return;
       const chaveC = chaveConteudoTx(c.date, c.amount, c.memo);
-      const existente = creditosMes.get(chaveC);
-      const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
-      const existenteResolvido = existente && (existente.used || !!existente.cliente || isResgateAplicacao(existente.memo) || isDevolucao(existente.memo) || isMesmaTitularidade(existente.memo));
-      if(!existente || (!existenteResolvido && cResolvido)) creditosMes.set(chaveC, c);
+      const creditOcorrenciaMes = creditosMes.get(chaveC+'#count') || 0;
+      creditosMes.set(chaveC + '|' + creditOcorrenciaMes, c);
+      creditosMes.set(chaveC+'#count', creditOcorrenciaMes+1);
       usouEssaSessao = true;
     });
     (snap.report||[]).forEach(r => {
-      if(dentroDoMes(r.pagoEm)){
-        const chave = r.idReport + '|' + r.empresa + '|' + r.valor;
-        const existente = reportMes.get(chave);
-        if(!existente || (existente.resultado !== 'ok' && r.resultado === 'ok')){
-          reportMes.set(chave, r);
-        }
-        usouEssaSessao = true;
+      if(!dentroDoMes(r.pagoEm)) return;
+      const diaISO = r.pagoEm ? new Date(r.pagoEm).toISOString().slice(0,10) : null;
+      if(diaISO && melhorSessaoPorDia.has(diaISO) && melhorSessaoPorDia.get(diaISO) !== idx) return;
+      const chave = r.idReport + '|' + r.empresa + '|' + r.valor;
+      const existente = reportMes.get(chave);
+      if(!existente || (existente.resultado !== 'ok' && r.resultado === 'ok')){
+        reportMes.set(chave, r);
       }
+      usouEssaSessao = true;
     });
     (snap.reportReceber||[]).forEach(n => {
-      if(dentroDoMes(n.dataEmissao)){
-        const chave = n.numeroNF + '|' + n.cnpjCliente;
-        const existente = notasMes.get(chave);
-        if(!existente || (existente.resultado !== 'ok' && n.resultado === 'ok')){
-          notasMes.set(chave, n);
-        }
-        usouEssaSessao = true;
+      if(!dentroDoMes(n.dataEmissao)) return;
+      const diaISO = n.dataEmissao ? new Date(n.dataEmissao).toISOString().slice(0,10) : null;
+      if(diaISO && melhorSessaoPorDia.has(diaISO) && melhorSessaoPorDia.get(diaISO) !== idx) return;
+      const chave = n.numeroNF + '|' + n.cnpjCliente;
+      const existente = notasMes.get(chave);
+      if(!existente || (existente.resultado !== 'ok' && n.resultado === 'ok')){
+        notasMes.set(chave, n);
       }
+      usouEssaSessao = true;
     });
     if(usouEssaSessao) sessoesUsadas++;
-  }
+  });
 
-  const debitosArr = [...debitosMes.values()];
-  const creditosArr = [...creditosMes.values()];
+  const debitosArr = [...debitosMes.entries()].filter(([k]) => !k.endsWith('#count')).map(([,v]) => v);
+  const creditosArr = [...creditosMes.entries()].filter(([k]) => !k.endsWith('#count')).map(([,v]) => v);
   const reportArr = [...reportMes.values()];
   const notasArr = [...notasMes.values()];
 
