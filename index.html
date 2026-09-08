@@ -2287,18 +2287,25 @@ async function gerarFechamentoMensal(){
     // sessão mais antiga (ou só reprocessada depois) apagar uma confirmação que já existia.
     (snap.debits||[]).forEach(d => {
       if(!dentroDoMes(d.date)) return;
-      const existente = debitosMes.get(d.fitid);
+      // Agrupa pelo CONTEÚDO (data+valor+memo), não pelo fitid — o fitid já mudou de formato
+      // algumas vezes conforme o sistema evoluiu ao longo do dia, então duas sessões salvas em
+      // momentos diferentes podiam ter fitids diferentes pro MESMO lançamento real, fazendo ele
+      // aparecer duas vezes aqui (uma pendente de uma sessão antiga, outra já resolvida de uma
+      // mais nova) em vez de ser reconhecido como a mesma coisa.
+      const chaveD = chaveConteudoTx(d.date, d.amount, d.memo);
+      const existente = debitosMes.get(chaveD);
       const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
       const existenteResolvido = existente && (existente.used || existente.identStatus === 'auto' || existente.identStatus === 'manual' || existente.estornado);
-      if(!existente || (!existenteResolvido && dResolvido)) debitosMes.set(d.fitid, d);
+      if(!existente || (!existenteResolvido && dResolvido)) debitosMes.set(chaveD, d);
       usouEssaSessao = true;
     });
     (snap.credits||[]).forEach(c => {
       if(!dentroDoMes(c.date)) return;
-      const existente = creditosMes.get(c.fitid);
+      const chaveC = chaveConteudoTx(c.date, c.amount, c.memo);
+      const existente = creditosMes.get(chaveC);
       const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
       const existenteResolvido = existente && (existente.used || !!existente.cliente || isResgateAplicacao(existente.memo) || isDevolucao(existente.memo) || isMesmaTitularidade(existente.memo));
-      if(!existente || (!existenteResolvido && cResolvido)) creditosMes.set(c.fitid, c);
+      if(!existente || (!existenteResolvido && cResolvido)) creditosMes.set(chaveC, c);
       usouEssaSessao = true;
     });
     (snap.report||[]).forEach(r => {
