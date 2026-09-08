@@ -3873,8 +3873,10 @@ async function runReconciliation(opts){
     if(r.resultado === 'ok') return false; // já resolvido pelo número de pagamento ou restaurado
     if(r.resultado === 'excluded') return false; // já resolvido (revisado manualmente ou conciliado em outra sessão)
     if(r.resultado === 'bad' && r.excludedReason && r.excludedReason.indexOf('Revisado manualmente') === 0) return false; // decisão manual preservada
-    if(ignorarAberto && r.status.toLowerCase() === 'aberto') return false;
-    if(ignorarFalha && r.status.toLowerCase().startsWith('falha')) return false;
+    // Linhas "Aberto"/"Falha" NÃO são mais excluídas aqui — elas passam pelo casamento normal
+    // como qualquer outra. Se o pagamento realmente já saiu do banco (mesmo o relatório ainda
+    // dizendo "Aberto"), o sistema encontra e concilia; só ficam de fora, mais adiante, as que
+    // genuinamente não têm nada parecido no extrato ainda.
     return r.valor !== null && r.pagoEm !== null;
   });
 
@@ -3935,6 +3937,21 @@ async function runReconciliation(opts){
       r.resultado = 'warn';
     } else {
       r.resultado = 'bad';
+    }
+  });
+
+  // Linhas "Aberto"/"Falha" que MESMO ASSIM não acharam nenhum candidato parecido no extrato
+  // voltam a ficar escondidas (como sempre foi por padrão) — evita ruído com contas que
+  // genuinamente ainda não venceram. Mas as que ACHARAM algo (✓ conciliado ou 🟡 sugestão)
+  // ficam disponíveis normalmente, porque o pagamento já pode ter saído do banco de verdade,
+  // mesmo o relatório ainda não tendo atualizado o status.
+  eligible.forEach(r => {
+    if(r.resultado !== 'bad') return;
+    const statusLower = r.status.toLowerCase();
+    const deveEsconder = (ignorarAberto && statusLower === 'aberto') || (ignorarFalha && statusLower.startsWith('falha'));
+    if(deveEsconder){
+      r.resultado = 'excluded';
+      r.excludedReason = 'Status "' + r.status + '" — ainda não deve aparecer no extrato';
     }
   });
 
