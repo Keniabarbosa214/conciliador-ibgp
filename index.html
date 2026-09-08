@@ -4857,7 +4857,7 @@ function renderResults(){
         <td>${buildAutocompleteInput('projeto', r.projeto||'', '— Projeto —', `data-rowidx="${r.rowIndex}" data-campo="report-proj"`)}</td>
         <td><input type="text" class="edit-inline fornecedor-input" data-rowidx="${r.rowIndex}" value="${(r.favorecido||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor"></td>
         <td><input type="text" class="edit-inline valor-input" data-rowidx="${r.rowIndex}" value="${r.valor!==null ? fmtMoney(r.valor) : ''}" placeholder="R$ 0,00" style="text-align:right;max-width:110px;"></td>
-        <td class="data">${r.pagoEm ? fmtDateISOtoBR(r.pagoEm) : '-'}</td>
+        <td><input type="date" class="edit-inline pagoem-input" data-rowidx="${r.rowIndex}" value="${r.pagoEm ? new Date(r.pagoEm).toISOString().slice(0,10) : ''}" style="max-width:135px;"></td>
         <td><input type="text" class="edit-inline observacoes-input" data-rowidx="${r.rowIndex}" value="${(r.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="opcional" style="min-width:140px;"></td>`;
 
       if(currentTab === 'ok'){
@@ -4961,6 +4961,17 @@ function renderResults(){
       r.valor = novoValor;
       r.raw['VALOR'] = novoValor;
       e.target.value = novoValor !== null ? fmtMoney(novoValor) : '';
+      persistCurrentSession();
+    });
+  });
+  wrap.querySelectorAll('.pagoem-input').forEach(inp => {
+    inp.addEventListener('change', (e) => {
+      const r = report.find(x => x.rowIndex === +e.target.dataset.rowidx);
+      if(!r) return;
+      // Corrige a data pra data REAL do pagamento encontrada no extrato — a data original do
+      // relatório é só uma previsão; ao identificar o pagamento de verdade, a data certa passa
+      // a ser essa, tanto pra exibição quanto pra exportação do relatório final.
+      r.pagoEm = e.target.value ? new Date(e.target.value + 'T00:00:00') : null;
       persistCurrentSession();
     });
   });
