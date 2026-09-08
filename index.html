@@ -1351,7 +1351,10 @@ function linhaEmMaiusculo(obj){
 
 function gerarFitidReparado(dateVal, amount, memo, contadorMap){
   const idPagamento = extractPaymentId(memo);
-  if(idPagamento) return ('idpag-' + idPagamento + '-' + Math.round(Math.abs(amount)*100)).replace(/[^a-z0-9-]/gi, '');
+  if(idPagamento){
+    const dataStr = dateVal ? new Date(dateVal).toISOString().slice(0,10) : '';
+    return ('idpag-' + idPagamento + '-' + Math.round(Math.abs(amount)*100) + '-' + dataStr).replace(/[^a-z0-9-]/gi, '');
+  }
   const chave = chaveConteudoTx(dateVal, amount, memo);
   const ocorrencia = (contadorMap.get(chave) || 0) + 1;
   contadorMap.set(chave, ocorrencia);
@@ -2979,19 +2982,21 @@ function extractPaymentId(text){
 // duplicatas genuínas (dois lançamentos idênticos no mesmo dia).
 function gerarFitidEstavel(prefixo, dataStr, num, fullMemo, documento, contadorMap){
   // Quando o memo tem um número de pagamento (ex: "Pagamento IBGP #945"), inclui também o
-  // valor no identificador — o número sozinho às vezes se repete em pagamentos DIFERENTES
-  // (boleto reemitido, numeração reaproveitada), e sem o valor junto, dois lançamentos
-  // diferentes acabavam com o mesmíssimo identificador, cada um "roubando" o outro.
+  // valor E a data no identificador — o número sozinho às vezes se repete em pagamentos
+  // DIFERENTES (boleto reemitido, numeração reaproveitada, ou até o mesmo valor pago de novo
+  // em outro mês), e sem esses dois complementos, lançamentos diferentes acabavam com o
+  // mesmíssimo identificador, cada um "roubando" a identificação do outro.
   const idPagamento = extractPaymentId(fullMemo);
+  const dataParsed = parseDateBR(dataStr);
   if(idPagamento){
-    return ('idpag-' + idPagamento + '-' + Math.round(Math.abs(num)*100)).replace(/[^a-z0-9-]/gi, '');
+    const dataISO = dataParsed ? dataParsed.toISOString().slice(0,10) : '';
+    return ('idpag-' + idPagamento + '-' + Math.round(Math.abs(num)*100) + '-' + dataISO).replace(/[^a-z0-9-]/gi, '');
   }
   // Pra tudo o mais, usa EXATAMENTE a mesma lógica da ferramenta de reparo (gerarFitidReparado):
   // só data + valor + memo, SEM o "documento" da coluna do arquivo (que não é garantidamente
   // estável entre exportações — pode ser um número sequencial do próprio arquivo, não do banco)
   // e SEM o prefixo do formato (xlsn/xls) — assim, processar um dia pela primeira vez e reparar
   // uma sessão antiga desse MESMO dia sempre chegam no mesmo identificador.
-  const dataParsed = parseDateBR(dataStr);
   const chave = chaveConteudoTx(dataParsed, num, fullMemo);
   const ocorrencia = (contadorMap.get(chave) || 0) + 1;
   contadorMap.set(chave, ocorrencia);
