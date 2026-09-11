@@ -2933,6 +2933,13 @@ function aplicarDadosNotaAoCredito(credito, nota){
     const padrao = document.getElementById('cfgCentroCustoReceber');
     credito.centroCusto = padrao ? padrao.value : '';
   }
+  // Se o pagamento realmente bater com essa nota (documento/nome confere), mas o VALOR recebido
+  // for diferente do valor da nota, avisa — pode ser retenção de impostos, desconto, pagamento
+  // parcial, ou erro de digitação; a pessoa decide e pode explicar no campo Observações.
+  const valorRecebido = Math.abs(credito.amount);
+  const bateValorLiquido = Math.abs(nota.valorLiquido - valorRecebido) < 0.01;
+  const bateValorServico = Math.abs(nota.valorServico - valorRecebido) < 0.01;
+  credito.valorDivergenteNF = !bateValorLiquido && !bateValorServico;
 }
 
 // Busca equivalências de um lançamento do extrato (débito ou crédito) tanto no relatório de
@@ -4447,9 +4454,10 @@ function renderResults(){
       } else {
         if(t.used){
           situacaoHtml = '<span class="pill ok">✅ Conciliado</span>';
-          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}
+          acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}${t.valorDivergenteNF ? ' <span style="font-size:11px;color:var(--bad);font-weight:700;">⚠️ valor recebido diferente do valor da nota</span>' : ''}
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
             ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
+            <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="${t.valorDivergenteNF ? 'Explique a diferença de valor (opcional)' : 'Observações (opcional)'}">
             <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desvincularNota('${rowKey}')">↩️ Desfazer (voltar a pendente)</button>`;
         } else if(isResgateAplicacao(t.memo) || isDevolucao(t.memo) || isMesmaTitularidade(t.memo)){
           situacaoHtml = '<span class="pill warn">🔄 Movimento interno</span>';
