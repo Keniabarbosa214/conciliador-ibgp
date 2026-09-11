@@ -917,7 +917,8 @@ const CENTRO_CUSTO_MASTER_LIST = [
   '27050 - Mobilização Inicial de Projeto',
   '28000 - Receita de Serviços',
   '29000 - Entradas/Devoluções/Extornos Diversos',
-  '30000 - Crédito Liberação Judicial'
+  '30000 - Crédito Liberação Judicial',
+  '31000 - Entrada de Verbas da ATI para Pagamento de Contas'
 ];
 const PROJETO_MASTER_LIST = [
   'Obra nova sede',
@@ -3620,6 +3621,14 @@ async function runReconciliation(opts){
       d.identStatus = 'auto';
       d.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
       d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    } else if((d.memo||'').toUpperCase().includes('FAV.: AMBER COMERCIO LTDA') || (d.memo||'').toUpperCase().includes('FAV.:AMBER COMERCIO LTDA')){
+      // Regra fixa: todo pagamento pra AMBER COMERCIO LTDA (identificado pelo "FAV.:" no memo)
+      // sempre é a mesma coisa — mesmo fornecedor, centro de custo e projeto, sem precisar
+      // identificar manualmente cada vez.
+      d.fornecedor = 'Amber Comercio';
+      d.identStatus = 'auto';
+      d.centroCusto = '1161 - Pessoas - Refeições  - Lanches';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     } else if(isParcelaSubscricaoIntegralizacao(d.memo)){
       d.fornecedor = bankName;
       d.identStatus = 'auto';
@@ -3699,6 +3708,18 @@ async function runReconciliation(opts){
       c.observacoes = partesMemoATI2.length > 2 ? partesMemoATI2.slice(2).join(' · ') : '';
     });
   }
+
+  // Reaplica a regra fixa da AMBER COMERCIO depois da restauração — mesmo motivo da regra ATI
+  // acima: uma identificação salva ANTES dessa regra existir não pode vencer por engano a regra
+  // nova, que é sempre a mesma pra esse fornecedor específico.
+  debits.forEach(d => {
+    if((d.memo||'').toUpperCase().includes('FAV.: AMBER COMERCIO LTDA') || (d.memo||'').toUpperCase().includes('FAV.:AMBER COMERCIO LTDA')){
+      d.fornecedor = 'Amber Comercio';
+      d.identStatus = 'auto';
+      d.centroCusto = '1161 - Pessoas - Refeições  - Lanches';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    }
+  });
 
   // Detectar pares de estorno: uma saída (débito) revertida por uma devolução (crédito) do
   // mesmo valor, em data próxima. O débito revertido nunca chegou a ser um pagamento efetivo,
