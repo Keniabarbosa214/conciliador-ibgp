@@ -2846,7 +2846,8 @@ function isResgateAplicacao(memo){
   return normalize(memo).includes('RESGATE');
 }
 function isDevolucao(memo){
-  return normalize(memo).includes('DEVOLU');
+  const m = normalize(memo);
+  return m.includes('DEVOLU') || m.includes('ESTORNO');
 }
 
 // ===================== MOTOR DE SUGESTÕES POR PADRÃO CONHECIDO =====================
