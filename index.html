@@ -3010,6 +3010,13 @@ function extractPaymentId(text){
   const m = (text||'').match(/#\s*(\d+)/);
   return m ? m[1] : null;
 }
+// Verifica se um CNPJ específico aparece no memo, ignorando pontos/traço/espaço — o mesmo CNPJ
+// pode vir formatado de jeitos diferentes dependendo do tipo de lançamento (PIX, transferência,
+// boleto), então compara só os dígitos.
+function memoTemCNPJ(memo, cnpjDigits){
+  const soDigitos = (memo||'').replace(/[^0-9]/g, '');
+  return soDigitos.includes(cnpjDigits);
+}
 
 // Gera um identificador (fitid) ESTÁVEL pra cada lançamento do extrato XLS, baseado no
 // conteúdo (data + valor + documento + memo) — não na posição dele dentro do arquivo. Isso é
@@ -3632,6 +3639,13 @@ async function runReconciliation(opts){
       d.identStatus = 'auto';
       d.centroCusto = '1161 - Pessoas - Refeições  - Lanches';
       d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    } else if(memoTemCNPJ(d.memo, '61224179000155')){
+      // Regra fixa por CNPJ (61.224.179/0001-55) — mesmo fornecedor (Amber Comercio), sem
+      // depender do texto "FAV.:" aparecer (PIX comum só traz o CNPJ, sem nome do favorecido).
+      d.fornecedor = 'AMBER COMERCIO';
+      d.identStatus = 'auto';
+      d.centroCusto = '1161 - Pessoas - Refeições  - Lanches';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     } else if(isParcelaSubscricaoIntegralizacao(d.memo)){
       d.fornecedor = bankName;
       d.identStatus = 'auto';
@@ -3718,6 +3732,11 @@ async function runReconciliation(opts){
   debits.forEach(d => {
     if((d.memo||'').toUpperCase().includes('FAV.: AMBER COMERCIO LTDA') || (d.memo||'').toUpperCase().includes('FAV.:AMBER COMERCIO LTDA')){
       d.fornecedor = 'Amber Comercio';
+      d.identStatus = 'auto';
+      d.centroCusto = '1161 - Pessoas - Refeições  - Lanches';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    } else if(memoTemCNPJ(d.memo, '61224179000155')){
+      d.fornecedor = 'AMBER COMERCIO';
       d.identStatus = 'auto';
       d.centroCusto = '1161 - Pessoas - Refeições  - Lanches';
       d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
