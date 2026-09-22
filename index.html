@@ -4951,7 +4951,7 @@ function renderResults(){
         <td>${buildAutocompleteInput('centroCusto', r.centroCusto, '— Centro de custo —', `data-rowidx="${r.rowIndex}" data-campo="report-cc"`)}</td>
         <td>${buildAutocompleteInput('projeto', r.projeto||'', '— Projeto —', `data-rowidx="${r.rowIndex}" data-campo="report-proj"`)}</td>
         <td><input type="text" class="edit-inline fornecedor-input" data-rowidx="${r.rowIndex}" value="${(r.favorecido||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do fornecedor"></td>
-        <td><input type="text" class="edit-inline valor-input" data-rowidx="${r.rowIndex}" value="${r.valor!==null ? fmtMoney(r.valor) : ''}" placeholder="R$ 0,00" style="text-align:right;max-width:110px;"></td>
+        <td><input type="text" class="edit-inline valor-input" data-rowidx="${r.rowIndex}" value="${r.valor!==null ? fmtMoney(r.valor) : ''}" placeholder="R$ 0,00" style="text-align:right;min-width:110px;width:130px;"></td>
         <td><input type="date" class="edit-inline pagoem-input" data-rowidx="${r.rowIndex}" value="${r.pagoEm ? new Date(r.pagoEm).toISOString().slice(0,10) : ''}" style="max-width:135px;"></td>
         <td><input type="text" class="edit-inline observacoes-input" data-rowidx="${r.rowIndex}" value="${(r.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="opcional" style="min-width:140px;"></td>`;
 
