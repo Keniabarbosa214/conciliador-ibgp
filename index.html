@@ -921,7 +921,8 @@ const CENTRO_CUSTO_MASTER_LIST = [
   '28000 - Receita de Serviços',
   '29000 - Entradas/Devoluções/Extornos Diversos',
   '30000 - Crédito Liberação Judicial',
-  '31000 - Entrada de Verbas da ATI para Pagamento de Contas'
+  '31000 - Entrada de Verbas da ATI para Pagamento de Contas',
+  '32000 - Investimento'
 ];
 const PROJETO_MASTER_LIST = [
   'Obra nova sede',
@@ -2845,6 +2846,11 @@ function isMesmaTitularidade(memo){
 function isParcelaSubscricaoIntegralizacao(memo){
   return normalize(memo).includes('PARCELAS SUBSC') || normalize(memo).includes('SUBSC INTEGR') || normalize(memo).includes('SUBSC./INTEGR');
 }
+// RDC (aplicação e resgate) é investimento do próprio instituto no Sicoob — mesma regra pra
+// entrada e saída. Usa palavra inteira pra não confundir com outras siglas.
+function isRDC(memo){
+  return /\bRDC\b/.test(normalize(memo));
+}
 function isResgateAplicacao(memo){
   return normalize(memo).includes('RESGATE');
 }
@@ -3609,6 +3615,11 @@ async function runReconciliation(opts){
     if(isResgateAplicacao(c.memo)){
       c.cliente = 'INSTITUTO BRASILEIRO DE GESTAO E PESQUISA';
     }
+    if(isRDC(c.memo)){
+      c.cliente = 'IBGP/Sicoob';
+      c.centroCusto = '32000 - Investimento';
+      c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    }
     // Transferência entre contas da mesma empresa (mesma titularidade) — também não é receita
     // de cliente, então já vem com fornecedor/centro de custo/projeto institucionais.
     if(isMesmaTitularidade(c.memo)){
@@ -3655,6 +3666,11 @@ async function runReconciliation(opts){
       d.fornecedor = bankName;
       d.identStatus = 'auto';
       d.centroCusto = '17000 - Financeiro - Taxas Bancárias';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    } else if(isRDC(d.memo)){
+      d.fornecedor = 'IBGP/Sicoob';
+      d.identStatus = 'auto';
+      d.centroCusto = '32000 - Investimento';
       d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     } else if(isBankOperation(d.memo)){
       d.fornecedor = bankName;
@@ -3716,6 +3732,24 @@ async function runReconciliation(opts){
       }
     });
   }
+
+  // Reaplica a regra do RDC depois da restauração: identificações salvas antes dela existir
+  // (fornecedor "Sicoob", sem centro de custo) não podem prevalecer sobre a regra nova.
+  debits.forEach(d => {
+    if(isRDC(d.memo) && !isMesmaTitularidade(d.memo)){
+      d.fornecedor = 'IBGP/Sicoob';
+      d.identStatus = 'auto';
+      d.centroCusto = '32000 - Investimento';
+      d.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    }
+  });
+  credits.forEach(c => {
+    if(isRDC(c.memo) && !isMesmaTitularidade(c.memo)){
+      c.cliente = 'IBGP/Sicoob';
+      c.centroCusto = '32000 - Investimento';
+      c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    }
+  });
 
   // Reaplica a regra fixa da conta ATI depois da restauração — sem isso, uma classificação
   // salva ANTES dessa regra existir (de quando o lançamento ainda não tinha fornecedor/centro
