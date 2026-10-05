@@ -3448,6 +3448,7 @@ async function runReconciliation(opts){
   const prevDebitsByValorData = {};
   const prevCreditsByValorData = {};
   const prevReceberByNumeroNF = {};
+  const diagRestauracao = { sessoes: 0, candidatos: 0, erro: null };
   if(preservar){
     report.forEach(r => { if(r.idReport) prevReportByID[String(r.idReport)] = r; });
     debits.forEach(d => {
@@ -3487,15 +3488,18 @@ async function runReconciliation(opts){
     try{
       const keys = await storageList('conc:');
       for(const key of keys){
-        if(key === currentSessionKey) continue; // essa já foi capturada da memória, acima
+        // Não pula a sessão atual: se a memória do navegador estiver vazia (página recarregada), ela
+        // não foi capturada acima, e pulá-la perdia as identificações salvas. Duplicatas com o que já
+        // veio da memória são descartadas pelo fitid, mais abaixo.
         const snap = await storageGet(key);
         if(!snap) continue;
+        diagRestauracao.sessoes++;
         (snap.debits||[]).forEach(d => {
           const dResolvido = d.used || d.identStatus === 'auto' || d.identStatus === 'manual' || d.estornado;
           if(!dResolvido) return; // só candidatos resolvidos ajudam a restauração
           const ck = chaveConteudoTx(d.date, d.amount, d.memo);
           const arr = prevDebitsByConteudo[ck] = prevDebitsByConteudo[ck] || [];
-          if(!arr.some(x => x.fitid === d.fitid)) arr.push(d);
+          if(!arr.some(x => x.fitid === d.fitid)){ arr.push(d); diagRestauracao.candidatos++; }
           const cvd = chaveValorData(d.date, d.amount);
           const arrVd = prevDebitsByValorData[cvd] = prevDebitsByValorData[cvd] || [];
           if(!arrVd.some(x => x.fitid === d.fitid)) arrVd.push(d);
@@ -3551,7 +3555,7 @@ async function runReconciliation(opts){
           }
         });
       }
-    }catch(e){ console.warn('Não consegui consultar conciliações salvas anteriores pra preservar identificações:', e); }
+    }catch(e){ console.warn('Não consegui consultar conciliações salvas anteriores pra preservar identificações:', e); diagRestauracao.erro = e.message || String(e); }
   }
 
   // parse extrato (OFX ou XLS, dependendo do que foi enviado)
@@ -4162,6 +4166,7 @@ async function runReconciliation(opts){
   document.getElementById('btnTrocarArquivos').style.display = 'inline-block';
   document.getElementById('cfgPeriodoDeResults').value = periodoDeStr;
   document.getElementById('cfgPeriodoAteResults').value = periodoAteStr;
+  mostrarDiagRestauracao(diagRestauracao, preservar, debits.filter(d => d.identStatus === 'manual').length);
 
   currentSessionKey = buildSessionKey();
   persistCurrentSession();
@@ -4169,6 +4174,30 @@ async function runReconciliation(opts){
     console.error('Erro na conciliação:', e);
     mostrarErroConciliacao('Ocorreu um erro ao conciliar: ' + e.message + ' (veja o console do navegador, F12, pra mais detalhes — e me manda essa mensagem).');
   }
+}
+
+function mostrarDiagRestauracao(diag, preservar, qtdManuais){
+  const wrap = document.getElementById('tableWrap');
+  if(!wrap || !wrap.parentNode) return;
+  let box = document.getElementById('diagRestauracaoBox');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'diagRestauracaoBox';
+    box.style.cssText = 'font-size:11.5px;margin:6px 0;';
+    wrap.parentNode.insertBefore(box, wrap);
+  }
+  if(!preservar){
+    box.style.color = 'var(--ink-soft)';
+    box.textContent = 'Refazer do zero: nenhuma identificação anterior foi reaproveitada.';
+    return;
+  }
+  if(diag.erro){
+    box.style.color = 'var(--bad)';
+    box.textContent = '⚠️ Não consegui consultar as conciliações salvas (' + diag.erro + '). As identificações anteriores podem não ter sido recuperadas.';
+    return;
+  }
+  box.style.color = 'var(--ink-soft)';
+  box.textContent = 'Identificações anteriores: ' + diag.sessoes + ' conciliação(ões) salva(s) consultada(s), ' + diag.candidatos + ' lançamento(s) identificado(s) encontrado(s) nelas, ' + qtdManuais + ' identificado(s) manualmente nesta conciliação.';
 }
 
 /* ============================= RENDERING ============================= */
