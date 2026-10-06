@@ -1911,12 +1911,27 @@ async function storageGet(key){
     return raw ? JSON.parse(raw) : null;
   }catch(e){ return null; }
 }
+function chavesLocais(prefix){
+  const keys = [];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.indexOf(STORAGE_NS+prefix) === 0) keys.push(k.substring(STORAGE_NS.length));
+    }
+  }catch(e){}
+  return keys;
+}
 async function storageList(prefix){
   if(modoCompartilhado){
+    // Junta o que está na nuvem com o que ficou guardado só neste navegador (ex: trabalho feito
+    // enquanto a conexão com o OneDrive estava fora, ou um salvamento na nuvem que falhou).
+    // Sem isso, esse trabalho ficava invisível: não aparecia na lista e não era recuperado.
+    let daNuvem = [];
     try{
       if(!cloudDataCache) await cloudFetch();
-      return Object.keys(cloudDataCache.sessions).filter(k => k.indexOf(prefix) === 0);
-    }catch(e){ alert(e.message); return []; }
+      daNuvem = Object.keys(cloudDataCache.sessions).filter(k => k.indexOf(prefix) === 0);
+    }catch(e){ alert(e.message); }
+    return [...new Set([...daNuvem, ...chavesLocais(prefix)])];
   }
   try{
     if(window.storage && typeof window.storage.list === 'function'){
@@ -1958,6 +1973,8 @@ async function storageDelete(key){
       delete cloudDataCache.sessions[key];
       await cloudSave();
     }catch(e){ alert(e.message); }
+    // Apaga também a cópia local, senão a sessão excluída reapareceria pela lista combinada.
+    try{ localStorage.removeItem(STORAGE_NS+key); }catch(e){}
     return;
   }
   try{
