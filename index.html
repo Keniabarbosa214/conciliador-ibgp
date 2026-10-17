@@ -2036,7 +2036,7 @@ function serializeSession(){
       valor: r.valor, pagoEm: r.pagoEm ? r.pagoEm.toISOString() : null,
       status: r.status, favorecido: r.favorecido, empresa: r.empresa,
       centroCusto: r.centroCusto, projeto: r.projeto, observacoes: r.observacoes, descricao: r.descricao, idReport: r.idReport,
-      idTransacao: r.idTransacao, resultado: r.resultado,
+      idTransacao: r.idTransacao, solicitacaoId: r.solicitacaoId || '', tipoPag: r.tipoPag || '', resultado: r.resultado,
       matchedTxFitid: r.matchedTx ? r.matchedTx.fitid : null,
       candidateFitids: r.candidates.map(c => ({fitid:c.tx.fitid, dateDiff:c.dateDiff, nameScore:c.nameScore})),
       manualConfirm: r.manualConfirm, excludedReason: r.excludedReason,
@@ -2087,7 +2087,7 @@ function deserializeSession(snap){
     pagoEm: r.pagoEm ? new Date(r.pagoEm) : null,
     status: r.status, favorecido: r.favorecido, empresa: r.empresa,
     centroCusto: r.centroCusto, projeto: r.projeto, observacoes: r.observacoes, descricao: r.descricao, idReport: r.idReport,
-    idTransacao: r.idTransacao, resultado: r.resultado,
+    idTransacao: r.idTransacao, solicitacaoId: r.solicitacaoId || '', tipoPag: r.tipoPag || '', resultado: r.resultado,
     matchedTx: r.matchedTxFitid ? fitidMap[r.matchedTxFitid] : null,
     candidates: (r.candidateFitids||[]).map(c => ({tx: fitidMap[c.fitid], dateDiff:c.dateDiff, nameScore:c.nameScore})).filter(c=>c.tx),
     manualConfirm: r.manualConfirm, excludedReason: r.excludedReason,
@@ -3044,6 +3044,95 @@ function memoTemCNPJ(memo, cnpjDigits){
   return soDigitos.includes(cnpjDigits);
 }
 
+// ===== Cruzamento por número, conforme a forma de pagamento =====
+// Boleto: o extrato traz o ID da SOLICITAÇÃO (coluna "SOLICITACAO ID" do relatório).
+// PIX: o extrato traz o ID da COBRANÇA (coluna "ID" do relatório).
+// Os dois números têm origens diferentes e podem coincidir por acaso, então um boleto nunca
+// casa com um débito PIX e vice-versa. Demais formas seguem como antes (coluna "ID").
+function lerColunaRelatorio(row, nomes){
+  const alvos = nomes.map(n => normalize(n));
+  const chave = Object.keys(row).find(k => alvos.includes(normalize(k)));
+  return chave === undefined ? '' : row[chave];
+}
+const NOMES_COLUNA_SOLICITACAO = ['SOLICITACAO ID','ID SOLICITACAO','ID DA SOLICITACAO','SOLICITACAO'];
+function classificarFormaPagamento(valor){
+  const v = normalize(valor);
+  if(!v) return '';
+  if(/\bBOLETO\b/.test(v)) return 'boleto';
+  if(/\bPIX\b/.test(v)) return 'pix';
+  return 'outro';
+}
+// Acha a coluna que traz a forma de pagamento: a que tem mais células curtas dizendo Boleto/PIX.
+function detectarColunaFormaPagamento(rows){
+  if(!rows.length) return null;
+  let melhor = null, melhorQtd = 0;
+  Object.keys(rows[0]).forEach(k => {
+    let qtd = 0;
+    rows.forEach(r => {
+      const v = (r[k] === undefined || r[k] === null) ? '' : String(r[k]);
+      if(v.length > 0 && v.length <= 40){
+        const n = normalize(v);
+        if(/\bBOLETO\b/.test(n) || /\bPIX\b/.test(n)) qtd++;
+      }
+    });
+    if(qtd > melhorQtd){ melhorQtd = qtd; melhor = k; }
+  });
+  return melhorQtd >= 3 ? melhor : null;
+}
+function tipoPagamentoExtrato(memo){
+  const m = normalize(memo);
+  if(/\bPIX\b/.test(m)) return 'pix';
+  if(m.includes('BOLETO') || m.includes('COMPE') || /\bDEB CONV\b/.test(m)) return 'boleto';
+  return 'outro';
+}
+function idRelatorioParaExtrato(r){
+  if(r.tipoPag === 'boleto' && r.solicitacaoId) return String(r.solicitacaoId);
+  return String(r.idReport || '');
+}
+function debitoCombinaPorId(d, r){
+  const id = idRelatorioParaExtrato(r);
+  if(!id || !d.idExtrato || String(d.idExtrato) !== id) return false;
+  const td = tipoPagamentoExtrato(d.memo);
+  if(r.tipoPag === 'pix') return td === 'pix';
+  if(r.tipoPag === 'boleto') return td !== 'pix';
+  return true;
+}
+function mostrarDiagRelatorio(d){
+  const ref = document.getElementById('diagRestauracaoBox') || document.getElementById('tableWrap');
+  if(!ref || !ref.parentNode) return;
+  let box = document.getElementById('diagRelatorioBox');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'diagRelatorioBox';
+    box.style.cssText = 'font-size:11.5px;margin:2px 0 6px;';
+    if(ref.id === 'tableWrap') ref.parentNode.insertBefore(box, ref);
+    else ref.parentNode.insertBefore(box, ref.nextSibling);
+  }
+  if(!d.coluna){
+    box.style.color = 'var(--bad)';
+    box.textContent = '⚠️ Relatório de cobranças: não encontrei a coluna com a forma de pagamento (Boleto/PIX). O cruzamento por número está usando o ID de cobrança em todas as linhas, como antes.';
+    return;
+  }
+  box.style.color = 'var(--ink-soft)';
+  let txt = 'Relatório: forma de pagamento lida da coluna "' + d.coluna + '" (' + d.boleto + ' boleto, ' + d.pix + ' PIX, ' + d.outro + ' outros, ' + d.vazio + ' sem informação). Pareadas pelo número: ' + d.porSolicitacao + ' por Nº de solicitação (boleto), ' + d.porCobranca + ' por Nº de cobrança (PIX e demais).';
+  if(!d.temColSolic) txt += ' ⚠️ Não encontrei a coluna SOLICITACAO ID: os boletos estão usando o ID de cobrança.';
+  else if(d.boletoSemSolic > 0) txt += ' ⚠️ ' + d.boletoSemSolic + ' boleto(s) sem SOLICITACAO ID preenchido.';
+  box.textContent = txt;
+}
+function construirDiagRelatorio(report, coluna, temColSolic){
+  const d = { coluna, temColSolic, boleto:0, pix:0, outro:0, vazio:0, boletoSemSolic:0, porSolicitacao:0, porCobranca:0 };
+  report.forEach(r => {
+    if(r.tipoPag === 'boleto'){ d.boleto++; if(!r.solicitacaoId) d.boletoSemSolic++; }
+    else if(r.tipoPag === 'pix') d.pix++;
+    else if(r.tipoPag === 'outro') d.outro++;
+    else d.vazio++;
+    if(r.matchedById){
+      if(r.tipoPag === 'boleto' && r.solicitacaoId) d.porSolicitacao++; else d.porCobranca++;
+    }
+  });
+  return d;
+}
+
 // Gera um identificador (fitid) ESTÁVEL pra cada lançamento do extrato XLS, baseado no
 // conteúdo (data + valor + documento + memo) — não na posição dele dentro do arquivo. Isso é
 // importante: se o banco muda a ordem dos lançamentos entre duas exportações do mesmo período
@@ -3873,6 +3962,8 @@ async function runReconciliation(opts){
   const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
   if(rows.length===0){ mostrarErroConciliacao('A planilha parece vazia.'); return; }
 
+  const colForma = detectarColunaFormaPagamento(rows);
+  const temColSolic = Object.keys(rows[0]).some(k => NOMES_COLUNA_SOLICITACAO.map(n => normalize(n)).includes(normalize(k)));
   report = rows.map((r, i) => {
     let valor = parseValorBR(r['VALOR']);
     // Proteção contra valor corrompido/absurdo (ex: célula da planilha com número de série de
@@ -3901,6 +3992,8 @@ async function runReconciliation(opts){
         : (r['OBSERVAÇÕES'] || r['OBSERVACOES'] || ''),
       descricao: r['DESCRICAO'] || '',
       idReport: r['ID'] || '',
+      solicitacaoId: String(lerColunaRelatorio(r, NOMES_COLUNA_SOLICITACAO) || '').trim(),
+      tipoPag: classificarFormaPagamento(colForma ? r[colForma] : ''),
       idTransacao: r['ID TRANSAÇÃO'] || r['ID TRANSACAO'] || '',
       resultado: valorSuspeito ? 'bad' : null, // força "sem correspondência" — nunca deixa esse tipo de linha ser "resolvida" sozinha
       excludedReason: valorSuspeito ? 'Valor suspeito na planilha original — revise antes de conciliar' : null,
@@ -3982,8 +4075,8 @@ async function runReconciliation(opts){
     // se existir um candidato de verdade NESTA sessão, ele é mais forte que aquele fallback.
     const vemDoFallbackDeOutraSessao = r.resultado === 'excluded' && r.excludedReason && r.excludedReason.indexOf('Já conciliado em outra conciliação salva') === 0;
     if(r.resultado && !vemDoFallbackDeOutraSessao) return;
-    if(!r.idReport) return;
-    const candidatosPorId = debits.filter(d => !d.used && !d.estornado && !isMesmaTitularidade(d.memo) && !isBankOperation(d.memo) && d.idExtrato && String(d.idExtrato) === String(r.idReport));
+    if(!idRelatorioParaExtrato(r)) return;
+    const candidatosPorId = debits.filter(d => !d.used && !d.estornado && !isMesmaTitularidade(d.memo) && !isBankOperation(d.memo) && debitoCombinaPorId(d, r));
     if(candidatosPorId.length === 1){
       const d = candidatosPorId[0];
       const valorBate = r.valor !== null && Math.abs(Math.abs(d.amount) - r.valor) < 0.01;
@@ -4220,6 +4313,7 @@ async function runReconciliation(opts){
   document.getElementById('cfgPeriodoDeResults').value = periodoDeStr;
   document.getElementById('cfgPeriodoAteResults').value = periodoAteStr;
   mostrarDiagRestauracao(diagRestauracao, preservar, debits.filter(d => d.identStatus === 'manual').length);
+  mostrarDiagRelatorio(construirDiagRelatorio(report, colForma, temColSolic));
 
   currentSessionKey = buildSessionKey();
   persistCurrentSession();
@@ -4917,7 +5011,7 @@ function renderResults(){
     // de verdade) e "provável duplicidade" (o dinheiro já saiu, só que reivindicado por OUTRA
     // linha do relatório — o relatório original só não foi atualizado com o status certo).
     const emAbertoComCheck = emAbertoTodos.map(r => {
-      let candidato = r.idReport ? debits.find(d => !d.estornado && String(d.idExtrato) === String(r.idReport)) : null;
+      let candidato = idRelatorioParaExtrato(r) ? debits.find(d => !d.estornado && debitoCombinaPorId(d, r)) : null;
       if(!candidato && r.valor !== null){
         candidato = debits.find(d => !d.estornado && Math.abs(Math.abs(d.amount) - r.valor) < 0.01 &&
           (!r.pagoEm || Math.abs(daysBetween(d.date, r.pagoEm)) <= 15));
@@ -5041,7 +5135,7 @@ function renderResults(){
         const tx = r.matchedTx;
         html += `<td style="font-size:12px;">
           ${tx ? `${fmtDateISOtoBR(tx.date)} · ${tx.memo}${tx.name ? ' · '+tx.name : ''}` : '-'}
-          ${r.matchedById ? '<span class="badge-id">🔗 Nº PAGAMENTO #'+r.idReport+(r.idValorDivergente ? ' ⚠️ valor diverge' : '')+'</span>' : ''}
+          ${r.matchedById ? '<span class="badge-id">🔗 '+((r.tipoPag==='boleto' && r.solicitacaoId) ? 'Nº SOLICITAÇÃO #'+r.solicitacaoId : 'Nº PAGAMENTO #'+r.idReport)+(r.idValorDivergente ? ' ⚠️ valor diverge' : '')+'</span>' : ''}
           ${r.manualConfirm ? '<span class="badge-manual">CONFIRMADO MANUALMENTE</span>' : ''}
           <br><button class="link-btn" onclick="desvincularPagamento(${r.rowIndex})">🔓 Desvincular</button>
         </td>`;
