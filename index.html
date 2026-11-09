@@ -4682,6 +4682,13 @@ function combinaTipoPesquisa(tipoItem){
   const t = pesquisaTipo();
   return !t || t === tipoItem;
 }
+// "entrada" na pesquisa não traz resgate de aplicação: é dinheiro do próprio instituto
+// voltando, não recebimento. O resgate só aparece se a pesquisa mencionar "resgate".
+function resgateForaDaPesquisaPorTipo(memo){
+  if(pesquisaTipo() !== 'entrada') return false;
+  if(!isResgateAplicacao(memo)) return false;
+  return !normalize(pesquisaTexto()).includes('RESGATE');
+}
 
 function matchesSearch(r){
   if(!searchTerm) return true;
@@ -4727,6 +4734,7 @@ function renderResultsBase(){
     ].filter(item => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(item.tipo)) return false;
+      if(item.tipo === 'entrada' && resgateForaDaPesquisaPorTipo(item.tx.memo)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const t = item.tx;
@@ -4988,6 +4996,7 @@ function renderResultsBase(){
     const list = credits.slice().sort((a,b)=> b.date - a.date).filter(c => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa('entrada')) return false;
+      if(resgateForaDaPesquisaPorTipo(c.memo)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const hay = normalize([c.cliente, c.memo, c.nf].join(' '));
@@ -5047,6 +5056,7 @@ function renderResultsBase(){
     ].sort((a,b)=> b.date - a.date).filter(m => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(m.tipo)) return false;
+      if(m.tipo === 'entrada' && resgateForaDaPesquisaPorTipo(m.memo)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const hay = normalize([m.memo, m.nome].join(' '));
