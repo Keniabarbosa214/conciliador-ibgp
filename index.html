@@ -676,7 +676,7 @@
     <div class="legend-help" id="legendHelp"></div>
 
     <div class="toolbar">
-      <input type="text" class="search-box" id="searchBox" placeholder="Buscar por favorecido, empresa, cliente, centro de custo, valor...">
+      <input type="text" class="search-box" id="searchBox" placeholder="Buscar por favorecido, cliente, centro de custo, valor, entrada ou saída...">
       <div class="soma-pesquisa" id="somaPesquisa"></div>
       <button class="btn-export" id="btnExport">Exportar relatório conciliado (.xlsx)</button>
     </div>
@@ -4666,11 +4666,31 @@ function valorMatchesSearch(valor, term){
   return termDigits.length >= 2 && formattedDigits.includes(termDigits);
 }
 
+// Na pesquisa da tela de resultados, as palavras "entrada" e "saída" filtram pelo tipo do
+// lançamento; o que sobrar da frase continua sendo a busca de sempre (nome, memo, valor...).
+// Ex: "entrada liquidação" = só entradas que tenham "liquidação".
+const REGEX_TIPO_PESQUISA = /(^|\s)(entradas?|sa[ií]das?)(?=\s|$)/gi;
+function pesquisaTipo(){
+  const m = (searchTerm || '').match(new RegExp(REGEX_TIPO_PESQUISA.source, 'i'));
+  if(!m) return null;
+  return /^entrad/i.test(m[2]) ? 'entrada' : 'saida';
+}
+function pesquisaTexto(){
+  return (searchTerm || '').replace(REGEX_TIPO_PESQUISA, ' ').replace(/\s+/g, ' ').trim();
+}
+function combinaTipoPesquisa(tipoItem){
+  const t = pesquisaTipo();
+  return !t || t === tipoItem;
+}
+
 function matchesSearch(r){
   if(!searchTerm) return true;
+  if(!combinaTipoPesquisa('saida')) return false; // linhas do relatório são pagamentos (saídas)
+  const txt = pesquisaTexto();
+  if(!txt) return true;
   const hay = normalize([r.favorecido, r.empresa, r.centroCusto, r.descricao, r.idReport].join(' '));
-  if(hay.includes(normalize(searchTerm))) return true;
-  return valorMatchesSearch(r.valor, searchTerm);
+  if(hay.includes(normalize(txt))) return true;
+  return valorMatchesSearch(r.valor, txt);
 }
 
 // Soma do que a pesquisa está mostrando na aba atual. Cada aba registra a sua no ponto em que
@@ -4706,9 +4726,12 @@ function renderResultsBase(){
       ...credits.map(c => ({ tipo:'entrada', tx:c }))
     ].filter(item => {
       if(!searchTerm) return true;
+      if(!combinaTipoPesquisa(item.tipo)) return false;
+      const txt = pesquisaTexto();
+      if(!txt) return true;
       const t = item.tx;
       const hay = normalize([t.memo, t.name, t.cliente||'', t.fornecedor||''].join(' '));
-      return hay.includes(normalize(searchTerm)) || valorMatchesSearch(t.amount, searchTerm);
+      return hay.includes(normalize(txt)) || valorMatchesSearch(t.amount, txt);
     }).sort((a,b) => b.tx.date - a.tx.date);
     registrarSomaPesquisa(todos.length, [
       { rotulo:'Entradas', valor: somarValores(todos.filter(i => i.tipo === 'entrada'), i => Math.abs(i.tx.amount)) },
@@ -4904,7 +4927,7 @@ function renderResultsBase(){
   if(currentTab === 'receber'){
     const foiRevisadaManualmenteNF = (n) => n.resultado === 'bad' && n.excludedReason && n.excludedReason.indexOf('Revisado manualmente') === 0;
     const rowsReceber = reportReceber.filter(n => (n.resultado === 'warn' || n.resultado === 'bad') && !foiRevisadaManualmenteNF(n) && (
-      !searchTerm || normalize([n.nomeCliente, n.numeroNF, n.cnpjCliente].join(' ')).includes(normalize(searchTerm)) || valorMatchesSearch(n.valorLiquido, searchTerm)
+      !searchTerm || (combinaTipoPesquisa('entrada') && (!pesquisaTexto() || normalize([n.nomeCliente, n.numeroNF, n.cnpjCliente].join(' ')).includes(normalize(pesquisaTexto())) || valorMatchesSearch(n.valorLiquido, pesquisaTexto())))
     ));
     registrarSomaPesquisa(rowsReceber.length, [{ rotulo:'Notas fiscais', valor: somarValores(rowsReceber, n => n.valorLiquido) }]);
     if(!nfseRaw){
@@ -4964,8 +4987,11 @@ function renderResultsBase(){
   if(currentTab === 'recebimentos'){
     const list = credits.slice().sort((a,b)=> b.date - a.date).filter(c => {
       if(!searchTerm) return true;
+      if(!combinaTipoPesquisa('entrada')) return false;
+      const txt = pesquisaTexto();
+      if(!txt) return true;
       const hay = normalize([c.cliente, c.memo, c.nf].join(' '));
-      return hay.includes(normalize(searchTerm)) || valorMatchesSearch(c.amount, searchTerm);
+      return hay.includes(normalize(txt)) || valorMatchesSearch(c.amount, txt);
     });
     registrarSomaPesquisa(list.length, [{ rotulo:'Recebimentos', valor: somarValores(list, c => Math.abs(c.amount)) }]);
     if(list.length===0){
@@ -5020,8 +5046,11 @@ function renderResultsBase(){
           c.used ? 'Conciliado' : (c.cliente ? 'Identificado manualmente' : 'Pendente') }))
     ].sort((a,b)=> b.date - a.date).filter(m => {
       if(!searchTerm) return true;
+      if(!combinaTipoPesquisa(m.tipo)) return false;
+      const txt = pesquisaTexto();
+      if(!txt) return true;
       const hay = normalize([m.memo, m.nome].join(' '));
-      return hay.includes(normalize(searchTerm)) || valorMatchesSearch(m.amount, searchTerm);
+      return hay.includes(normalize(txt)) || valorMatchesSearch(m.amount, txt);
     });
     registrarSomaPesquisa(movRows.length, [
       { rotulo:'Entradas', valor: somarValores(movRows.filter(m => m.tipo === 'entrada'), m => m.amount) },
@@ -5289,7 +5318,7 @@ function renderResultsBase(){
   // aba "A conciliar": segunda seção com lançamentos do extrato (débitos) sem vínculo a nenhuma linha do relatório
   if(currentTab === 'pendentes'){
     const debitsPend = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente' && (
-      !searchTerm || normalize([d.memo, d.name, d.fornecedor].join(' ')).includes(normalize(searchTerm)) || valorMatchesSearch(d.amount, searchTerm)
+      !searchTerm || (combinaTipoPesquisa('saida') && (!pesquisaTexto() || normalize([d.memo, d.name, d.fornecedor].join(' ')).includes(normalize(pesquisaTexto())) || valorMatchesSearch(d.amount, pesquisaTexto())))
     )).sort((a,b)=> b.date - a.date);
     registrarSomaPesquisa(rows.length + debitsPend.length, [
       { rotulo:'Linhas do relatório', valor: somarValores(rows, r => r.valor) },
