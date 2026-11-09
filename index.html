@@ -4734,6 +4734,7 @@ function renderResults(){
           acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
             ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
+            <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="Observações (opcional)">
             <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerIdentificacao('${rowKey}','credito')">↩️ Desfazer (voltar a pendente)</button>`;
         } else {
           situacaoHtml = '<span class="pill bad">🔧 A conciliar</span>';
