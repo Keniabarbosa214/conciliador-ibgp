@@ -2487,6 +2487,16 @@ function exportarFechamentoMensal(){
     });
   });
   creditosArr.forEach(c => {
+    if(temRateio(c)){
+      c.rateio.forEach((p, k) => linhas.push({
+        'DATA': fmtDateISOtoBR(new Date(c.date)), 'TIPO': 'Entrada', 'VALOR (R$)': p.valor,
+        'FORNECEDOR': p.cliente, 'CENTRO DE CUSTO': p.centroCusto, 'PROJETO': p.projeto,
+        'ID RELATÓRIO / NF': p.nf || '', 'SITUAÇÃO': 'Identificado manualmente (parte ' + (k+1) + ' de ' + c.rateio.length + ')',
+        'OBSERVAÇÕES': p.observacoes || '',
+        'MEMO NO EXTRATO': c.memo
+      }));
+      return;
+    }
     let situacao;
     if(c.used) situacao = 'Conciliado (nota fiscal)';
     else if(isResgateAplicacao(c.memo)) situacao = 'Movimento interno (resgate)';
@@ -2991,6 +3001,7 @@ function docMatches(documentoCompleto, maskedDigits){
 // Preenche automaticamente cliente, nº da NF e o centro de custo padrão de recebimentos
 // (configurável, ex: "Recebimento de Certames") sempre que um crédito é vinculado a uma nota fiscal.
 function aplicarDadosNotaAoCredito(credito, nota){
+  if(credito.rateio) delete credito.rateio; // vínculo manual com nota substitui a divisão
   credito.cliente = nota.nomeCliente;
   credito.nf = nota.numeroNF;
   if(!credito.centroCusto || credito.centroCusto === CC_RECEBIMENTO_A_DEVOLVER){
@@ -3875,6 +3886,7 @@ async function runReconciliation(opts){
         c.centroCusto = prev.centroCusto;
         c.projeto = prev.projeto;
         c.observacoes = prev.observacoes;
+        if(temRateio(prev)) c.rateio = prev.rateio.map(p => ({...p}));
       }
     });
   }
@@ -4272,10 +4284,10 @@ async function runReconciliation(opts){
           const prev = prevReceberByNumeroNF[String(n.numeroNF)];
           if(!prev || !prev.resultado) return;
           if(prev.resultado === 'ok' && prev.matchedTx){
-            let c = credits.find(x => x.fitid === prev.matchedTx.fitid && !x.used);
+            let c = credits.find(x => x.fitid === prev.matchedTx.fitid && !x.used && !temRateio(x));
             if(!c){
               const chaveAntiga = chaveConteudoTx(prev.matchedTx.date, prev.matchedTx.amount, prev.matchedTx.memo);
-              c = credits.find(x => !x.used && chaveConteudoTx(x.date, x.amount, x.memo) === chaveAntiga);
+              c = credits.find(x => !x.used && !temRateio(x) && chaveConteudoTx(x.date, x.amount, x.memo) === chaveAntiga);
             }
             if(c){
               n.matchedTx = c; c.used = true; n.resultado = 'ok';
@@ -4297,7 +4309,7 @@ async function runReconciliation(opts){
       // Passo 1 — cruzamento pelo número da NF, quando o cliente cita ele no PIX/TED recebido
       reportReceber.forEach(n => {
         if(n.resultado) return; // já resolvido pela restauração acima
-        const candidatosPorNF = credits.filter(c => !c.used && !isMesmaTitularidade(c.memo) && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && c.nf && String(c.nf) === String(n.numeroNF));
+        const candidatosPorNF = credits.filter(c => !c.used && !temRateio(c) && !isMesmaTitularidade(c.memo) && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && c.nf && String(c.nf) === String(n.numeroNF));
         if(candidatosPorNF.length === 1){
           const c = candidatosPorNF[0];
           n.matchedTx = c; c.used = true; n.resultado = 'ok'; n.matchedByNF = true;
@@ -4309,7 +4321,7 @@ async function runReconciliation(opts){
       const elegiveisReceber = reportReceber.filter(n => n.resultado === null);
       elegiveisReceber.forEach(n => {
         const cands = credits.filter(c => {
-          if(c.used || !c.date) return false;
+          if(c.used || temRateio(c) || !c.date) return false;
           if(isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false; // movimento interno, não é receita de cliente
           const amtMatch = Math.abs(Math.abs(c.amount) - n.valorLiquido) < 0.01 || Math.abs(Math.abs(c.amount) - n.valorServico) < 0.01;
           const dateMatch = Math.abs(daysBetween(c.date, n.dataEmissao)) <= windowReceberDays;
@@ -4427,6 +4439,7 @@ function renderSummary(){
   const creditosSemCCProjeto = credits.filter(c => {
     const resolvido = c.used || !!c.cliente;
     if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false;
+    if(temRateio(c)) return false; // a divisão só é salva com centro de custo e projeto em todas as partes
     return faltaCCouProjeto(c.centroCusto, c.projeto);
   }).length;
   const reportSemCCProjeto = report.filter(r => r.resultado === 'ok' && faltaCCouProjeto(r.centroCusto, r.projeto)).length;
@@ -4729,12 +4742,19 @@ function renderResults(){
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
             ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
             <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="Observações (opcional)">`;
+        } else if(temRateio(t)){
+          situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
+          acaoHtml = `<div style="font-size:11.5px;margin-bottom:4px;"><b>✂️ Dividido em ${t.rateio.length} partes</b></div>
+            ${t.rateio.map(p => `<div style="font-size:11.5px;color:var(--ink-soft);margin-bottom:2px;">${dvEsc(p.cliente)} · ${dvEsc(p.projeto)} · <b>${fmtMoney(p.valor)}</b></div>`).join('')}
+            <button class="link-btn" style="margin-top:4px;color:var(--navy);margin-right:10px;" onclick="abrirDivisaoRecebimento('${rowKey}')">✏️ Editar divisão</button>
+            <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerIdentificacao('${rowKey}','credito')">↩️ Desfazer (voltar a pendente)</button>`;
         } else if(t.cliente){
           situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
           acaoHtml = `<input type="text" class="edit-inline extrato-forn-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.cliente||'').toString().replace(/"/g,'&quot;')}" placeholder="Nome do cliente">${t.nf?' <span style="font-size:11px;color:var(--ink-soft);">NF '+t.nf+'</span>':''}
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
             ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
             <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="Observações (opcional)">
+            <button class="link-btn" style="margin-top:4px;color:var(--navy);margin-right:10px;" onclick="abrirDivisaoRecebimento('${rowKey}')">✂️ Dividir entre projetos</button>
             <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerIdentificacao('${rowKey}','credito')">↩️ Desfazer (voltar a pendente)</button>`;
         } else {
           situacaoHtml = '<span class="pill bad">🔧 A conciliar</span>';
@@ -4765,6 +4785,7 @@ function renderResults(){
           <div class="busca-geral-resultado" id="buscaGeral-${rowKey}"></div>
           <div class="criar-lancamento-area" style="margin-top:6px;">
             <button class="link-btn" style="text-decoration:none;color:var(--navy);font-weight:600;" onclick="toggleCriarLancamento('${rowKey}','${item.tipo}')">➕ Não tem no relatório? Identificar manualmente</button>
+            ${item.tipo === 'entrada' ? `<button class="link-btn" style="text-decoration:none;color:var(--navy);font-weight:600;margin-left:10px;" onclick="abrirDivisaoRecebimento('${rowKey}')">✂️ Dividir entre projetos</button>` : ''}
             <div id="criarLancamento-${rowKey}" style="display:none;margin-top:6px;"></div>
           </div>
         </td>`;
@@ -5010,6 +5031,7 @@ function renderResults(){
     credits.forEach(c => {
       const resolvido = c.used || !!c.cliente;
       if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return;
+      if(temRateio(c)) return;
       if(faltaCCouProjetoCtrl(c.centroCusto, c.projeto)){
         itensSemCCProjeto.push({ tipo:'Entrada', data:c.date, valor:Math.abs(c.amount), nome:c.cliente, fitid:c.fitid, modo:'credito', cc:c.centroCusto, proj:c.projeto });
       }
@@ -5362,6 +5384,7 @@ function desfazerIdentificacao(fitid, modo){
     const c = credits.find(x => x.fitid === fitid);
     if(!c) return;
     c.cliente = ''; c.nf = ''; c.centroCusto = ''; c.projeto = ''; c.observacoes = '';
+    delete c.rateio;
   }
   renderResults();
   persistCurrentSession();
@@ -5662,6 +5685,180 @@ function toggleCriarLancamento(fitid, tipo){
   if(abrindo) renderCriarLancamento(fitid, tipo);
 }
 
+// ===================== DIVISÃO DE UM RECEBIMENTO ENTRE VÁRIOS PROJETOS =====================
+// Um crédito do banco pode pagar vários projetos de uma vez. A divisão guarda cada parte
+// (cliente, NF, centro de custo, projeto, valor) em c.rateio; o crédito do extrato continua
+// um só, então saldo e totais do banco não mudam. Na exportação sai uma linha por parte.
+let divisaoFitid = null;
+function dvEsc(s){
+  return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function injetarEstiloDivisao(){
+  if(document.getElementById('dvStyle')) return;
+  const st = document.createElement('style');
+  st.id = 'dvStyle';
+  st.textContent = `
+    .dv-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:2000; overflow:auto; padding:30px 12px; display:flex; justify-content:center; align-items:flex-start; }
+    .dv-panel{ background:#fff; border-radius:8px; padding:18px 20px; width:min(1120px,100%); box-shadow:0 10px 40px rgba(0,0,0,.35); }
+    .dv-panel h3{ margin:0 0 4px; color:var(--navy); }
+    .dv-sub{ font-size:12.5px; color:var(--ink-soft); margin-bottom:12px; word-break:break-word; }
+    .dv-tab{ width:100%; table-layout:fixed; border-collapse:collapse; }
+    .dv-tab th{ text-align:left; font-size:11px; color:var(--ink-soft); padding:4px 4px; }
+    .dv-tab td{ padding:3px 4px; vertical-align:top; }
+    .dv-soma{ margin:12px 0 4px; font-size:13px; font-weight:700; }
+    .dv-botoes{ display:flex; gap:14px; align-items:center; margin-top:10px; }
+  `;
+  document.head.appendChild(st);
+}
+function temRateio(c){ return !!(c && c.rateio && c.rateio.length); }
+function parteVazia(){ return { cliente:'', nf:'', centroCusto:'', projeto:'', valor:0, observacoes:'' }; }
+
+function abrirDivisaoRecebimento(fitid){
+  const c = credits.find(x => x.fitid === fitid);
+  if(!c) return;
+  divisaoFitid = fitid;
+  const total = Math.abs(c.amount);
+  let partes;
+  if(temRateio(c)) partes = c.rateio.map(p => ({...p}));
+  else partes = [
+    { cliente: c.cliente || '', nf: c.nf || '', centroCusto: c.centroCusto || '', projeto: c.projeto || '', valor: total, observacoes: c.observacoes || '' },
+    parteVazia()
+  ];
+  desenharDivisao(partes);
+}
+function desenharDivisao(partes){
+  const c = credits.find(x => x.fitid === divisaoFitid);
+  if(!c) return;
+  injetarEstiloDivisao();
+  let ov = document.getElementById('divisaoOverlay');
+  if(!ov){ ov = document.createElement('div'); ov.id = 'divisaoOverlay'; document.body.appendChild(ov); }
+  ov.className = 'dv-overlay';
+  const total = Math.abs(c.amount);
+  ov.innerHTML = `<div class="dv-panel">
+    <h3>✂️ Dividir recebimento entre projetos</h3>
+    <div class="dv-sub">${fmtDateISOtoBR(c.date)} · <b>R$ ${fmtMoney(total)}</b> · ${dvEsc(c.memo)}</div>
+    <table class="dv-tab">
+      <colgroup><col style="width:19%"><col style="width:7%"><col style="width:22%"><col style="width:22%"><col style="width:11%"><col style="width:15%"><col style="width:4%"></colgroup>
+      <thead><tr><th>Cliente / pagador</th><th>NF</th><th>Centro de custo</th><th>Projeto</th><th>Valor (R$)</th><th>Observações</th><th></th></tr></thead>
+      <tbody>
+      ${partes.map((p, i) => `<tr data-i="${i}">
+        <td><input type="text" class="edit-inline dv-cli" value="${dvEsc(p.cliente)}" placeholder="Nome do cliente"></td>
+        <td><input type="text" class="edit-inline dv-nf" value="${dvEsc(p.nf)}" placeholder="NF"></td>
+        <td>${buildAutocompleteInput('centroCusto', p.centroCusto, '— Centro de custo —', 'data-dv="cc"')}</td>
+        <td>${buildAutocompleteInput('projeto', p.projeto, '— Projeto —', 'data-dv="proj"')}</td>
+        <td><input type="text" class="edit-inline dv-valor" style="text-align:right;" value="${p.valor ? fmtMoney(p.valor) : ''}" placeholder="0,00"></td>
+        <td><input type="text" class="edit-inline dv-obs" value="${dvEsc(p.observacoes)}" placeholder="opcional"></td>
+        <td><button class="link-btn" style="color:var(--bad);text-decoration:none;font-size:15px;" onclick="removerParteDivisao(${i})" title="Remover esta parte">✕</button></td>
+      </tr>`).join('')}
+      </tbody>
+    </table>
+    <div id="divisaoSoma" class="dv-soma"></div>
+    <div class="dv-botoes">
+      <button class="link-btn" style="color:var(--navy);font-weight:600;text-decoration:none;" onclick="adicionarParteDivisao()">➕ Adicionar parte</button>
+      <span style="flex:1;"></span>
+      <button class="link-btn" onclick="fecharDivisaoRecebimento()">Cancelar</button>
+      <button class="btn-cloud" style="padding:8px 16px;" onclick="salvarDivisaoRecebimento()">Salvar divisão</button>
+    </div>
+  </div>`;
+  atualizarSomaDivisao();
+}
+function lerPartesDivisao(){
+  const ov = document.getElementById('divisaoOverlay');
+  if(!ov) return [];
+  return [...ov.querySelectorAll('tbody tr')].map(tr => ({
+    cliente: tr.querySelector('.dv-cli').value.trim(),
+    nf: tr.querySelector('.dv-nf').value.trim(),
+    centroCusto: tr.querySelector('[data-dv="cc"]').value.trim(),
+    projeto: tr.querySelector('[data-dv="proj"]').value.trim(),
+    valor: parseValorBR(tr.querySelector('.dv-valor').value) || 0,
+    observacoes: tr.querySelector('.dv-obs').value.trim()
+  }));
+}
+function atualizarSomaDivisao(){
+  const c = credits.find(x => x.fitid === divisaoFitid);
+  const el = document.getElementById('divisaoSoma');
+  if(!c || !el) return;
+  const total = Math.round(Math.abs(c.amount) * 100) / 100;
+  const soma = Math.round(lerPartesDivisao().reduce((a, p) => a + p.valor, 0) * 100) / 100;
+  const dif = Math.round((total - soma) * 100) / 100;
+  if(Math.abs(dif) < 0.005){
+    el.style.color = 'var(--ok)';
+    el.textContent = '✔ Soma R$ ' + fmtMoney(soma) + ' fecha com o valor do banco.';
+  } else {
+    el.style.color = 'var(--bad)';
+    el.textContent = 'Soma R$ ' + fmtMoney(soma) + ' de R$ ' + fmtMoney(total) + ' — ' + (dif > 0 ? 'faltam R$ ' : 'sobram R$ ') + fmtMoney(Math.abs(dif));
+  }
+}
+function adicionarParteDivisao(){
+  const c = credits.find(x => x.fitid === divisaoFitid);
+  if(!c) return;
+  const partes = lerPartesDivisao();
+  const total = Math.round(Math.abs(c.amount) * 100) / 100;
+  const soma = Math.round(partes.reduce((a, p) => a + p.valor, 0) * 100) / 100;
+  const resto = Math.round((total - soma) * 100) / 100;
+  const nova = parteVazia();
+  if(resto > 0) nova.valor = resto; // já sugere o que ainda falta distribuir
+  partes.push(nova);
+  desenharDivisao(partes);
+}
+function removerParteDivisao(i){
+  const partes = lerPartesDivisao();
+  partes.splice(i, 1);
+  if(partes.length === 0) partes.push(parteVazia());
+  desenharDivisao(partes);
+}
+function fecharDivisaoRecebimento(){
+  const ov = document.getElementById('divisaoOverlay');
+  if(ov) ov.remove();
+  divisaoFitid = null;
+}
+function salvarDivisaoRecebimento(){
+  const c = credits.find(x => x.fitid === divisaoFitid);
+  if(!c) return;
+  const partes = lerPartesDivisao().map(p => ({...p, valor: Math.round(p.valor * 100) / 100}));
+  const total = Math.round(Math.abs(c.amount) * 100) / 100;
+  for(let i = 0; i < partes.length; i++){
+    const p = partes[i], n = i + 1;
+    if(!p.cliente){ alert('Parte ' + n + ': informe o cliente.'); return; }
+    if(!p.centroCusto){ alert('Parte ' + n + ': escolha o centro de custo (obrigatório).'); return; }
+    if(!p.projeto){ alert('Parte ' + n + ': escolha o projeto (obrigatório).'); return; }
+    if(!(p.valor > 0)){ alert('Parte ' + n + ': informe o valor.'); return; }
+  }
+  const soma = Math.round(partes.reduce((a, p) => a + p.valor, 0) * 100) / 100;
+  if(Math.abs(soma - total) > 0.004){
+    alert('A soma das partes (R$ ' + fmtMoney(soma) + ') precisa fechar com o valor do banco (R$ ' + fmtMoney(total) + '). Diferença: R$ ' + fmtMoney(Math.abs(total - soma)) + '.');
+    return;
+  }
+  if(partes.length === 1){
+    // uma parte só não é divisão: vira a identificação normal do recebimento
+    const p = partes[0];
+    c.cliente = p.cliente; c.nf = p.nf; c.centroCusto = p.centroCusto; c.projeto = p.projeto; c.observacoes = p.observacoes;
+    delete c.rateio;
+  } else {
+    c.rateio = partes;
+    c.cliente = 'RATEADO EM ' + partes.length + ' PARTES';
+    c.nf = ''; c.centroCusto = ''; c.projeto = '';
+  }
+  fecharDivisaoRecebimento();
+  renderResults();
+  persistCurrentSession();
+}
+document.addEventListener('input', (e) => {
+  if(e.target.classList && e.target.classList.contains('dv-valor')) atualizarSomaDivisao();
+});
+document.addEventListener('focusout', (e) => {
+  if(e.target.classList && e.target.classList.contains('dv-valor')){
+    const v = parseValorBR(e.target.value);
+    e.target.value = v ? fmtMoney(v) : '';
+    atualizarSomaDivisao();
+  }
+});
+window.abrirDivisaoRecebimento = abrirDivisaoRecebimento;
+window.adicionarParteDivisao = adicionarParteDivisao;
+window.removerParteDivisao = removerParteDivisao;
+window.fecharDivisaoRecebimento = fecharDivisaoRecebimento;
+window.salvarDivisaoRecebimento = salvarDivisaoRecebimento;
+
 function renderCriarLancamento(fitid, tipo){
   const el = document.getElementById('criarLancamento-' + fitid);
   if(!el) return;
@@ -5800,6 +5997,22 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   });
 
   credits.forEach(c => {
+    if(temRateio(c)){
+      c.rateio.forEach((p, k) => linhasUnificadas.push({
+        'DATA': fmtDateISOtoBR(c.date),
+        'TIPO': 'Entrada',
+        'VALOR (R$)': p.valor,
+        'FORNECEDOR': p.cliente,
+        'CENTRO DE CUSTO': p.centroCusto,
+        'PROJETO': p.projeto,
+        'ID RELATÓRIO / NF': p.nf || '',
+        'DATA DE PAGAMENTO': fmtDateISOtoBR(c.date),
+        'SITUAÇÃO': 'Identificado manualmente (parte ' + (k+1) + ' de ' + c.rateio.length + ')',
+        'OBSERVAÇÕES': p.observacoes || '',
+        'MEMO NO EXTRATO': c.memo
+      }));
+      return;
+    }
     let situacao;
     if(c.used) situacao = 'Conciliado (nota fiscal)';
     else if(isResgateAplicacao(c.memo)) situacao = 'Movimento interno (resgate)';
