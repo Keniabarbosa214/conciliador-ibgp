@@ -924,10 +924,12 @@ const CENTRO_CUSTO_MASTER_LIST = [
   '29000 - Entradas/Devoluções/Extornos Diversos',
   '30000 - Crédito Liberação Judicial',
   '31000 - Entrada de Verbas da ATI para Pagamento de Contas',
-  '32000 - Investimento'
+  '32000 - Investimento',
+  '33000 - Recebimentos de Certames a devolver'
 ];
 const PROJETO_MASTER_LIST = [
   'Obra nova sede',
+  'Diversos em andamento',
   '10087 - PREF. BRUMADINHO - CONCURSO E PSP',
   '10186 - PREF ITABIRA - PSS EDUCAÇÃO',
   '10191 - SENAR GO - SELEÇÃO GERAL',
@@ -2870,6 +2872,20 @@ function isParcelaSubscricaoIntegralizacao(memo){
 function isRDC(memo){
   return /\bRDC\b/.test(normalize(memo));
 }
+// Crédito de liquidação de cobrança: o banco credita inscrições pagas por boleto, de vários
+// certames ao mesmo tempo, então não dá pra saber o projeto na hora. Entra com um padrão que
+// pode ser trocado em cada linha.
+const CLIENTE_LIQUIDACAO_COBRANCA = 'Instituto Brasileiro de Gestao e Pesquisa';
+const CC_RECEBIMENTO_A_DEVOLVER = '33000 - Recebimentos de Certames a devolver';
+const PROJETO_DIVERSOS = 'Diversos em andamento';
+function isLiquidacaoCobranca(memo){
+  return /LIQUIDACAO\s+COBRANCA/.test(normalize(memo));
+}
+function aplicarPadraoLiquidacaoCobranca(c){
+  c.cliente = CLIENTE_LIQUIDACAO_COBRANCA;
+  if(!c.centroCusto) c.centroCusto = CC_RECEBIMENTO_A_DEVOLVER;
+  if(!c.projeto) c.projeto = PROJETO_DIVERSOS;
+}
 function isResgateAplicacao(memo){
   return normalize(memo).includes('RESGATE');
 }
@@ -2959,10 +2975,13 @@ function docMatches(documentoCompleto, maskedDigits){
 function aplicarDadosNotaAoCredito(credito, nota){
   credito.cliente = nota.nomeCliente;
   credito.nf = nota.numeroNF;
-  if(!credito.centroCusto){
+  if(!credito.centroCusto || credito.centroCusto === CC_RECEBIMENTO_A_DEVOLVER){
     const padrao = document.getElementById('cfgCentroCustoReceber');
     credito.centroCusto = padrao ? padrao.value : '';
   }
+  // Se tinha o projeto provisório da liquidação de cobrança, tira: com nota fiscal vinculada o
+  // projeto é de um certame específico e precisa ser informado.
+  if(credito.projeto === PROJETO_DIVERSOS) credito.projeto = '';
   // Se o pagamento realmente bater com essa nota (documento/nome confere), mas o VALOR recebido
   // for diferente do valor da nota, avisa — pode ser retenção de impostos, desconto, pagamento
   // parcial, ou erro de digitação; a pessoa decide e pode explicar no campo Observações.
@@ -3728,6 +3747,7 @@ async function runReconciliation(opts){
       c.centroCusto = '32000 - Investimento';
       c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
     }
+    if(isLiquidacaoCobranca(c.memo)) aplicarPadraoLiquidacaoCobranca(c);
     // Transferência entre contas da mesma empresa (mesma titularidade) — também não é receita
     // de cliente, então já vem com fornecedor/centro de custo/projeto institucionais.
     if(isMesmaTitularidade(c.memo)){
@@ -3840,6 +3860,12 @@ async function runReconciliation(opts){
       }
     });
   }
+
+  // Liquidação de cobrança: depois da restauração, só completa o que ficou em branco. Se a
+  // pessoa já trocou cliente, centro de custo ou projeto, a escolha dela é mantida.
+  credits.forEach(c => {
+    if(isLiquidacaoCobranca(c.memo) && !c.used && !c.cliente) aplicarPadraoLiquidacaoCobranca(c);
+  });
 
   // Reaplica a regra do RDC depois da restauração: identificações salvas antes dela existir
   // (fornecedor "Sicoob", sem centro de custo) não podem prevalecer sobre a regra nova.
