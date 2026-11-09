@@ -4682,12 +4682,15 @@ function combinaTipoPesquisa(tipoItem){
   const t = pesquisaTipo();
   return !t || t === tipoItem;
 }
-// "entrada" na pesquisa não traz resgate de aplicação: é dinheiro do próprio instituto
-// voltando, não recebimento. O resgate só aparece se a pesquisa mencionar "resgate".
-function resgateForaDaPesquisaPorTipo(memo){
+// "entrada" na pesquisa não traz resgate de aplicação nem devolução/estorno: é dinheiro voltando,
+// não recebimento. Cada um só aparece se a pesquisa mencionar a palavra ("resgate", "devolução"
+// ou "estorno").
+function movimentoInternoForaDaPesquisaPorTipo(memo){
   if(pesquisaTipo() !== 'entrada') return false;
-  if(!isResgateAplicacao(memo)) return false;
-  return !normalize(pesquisaTexto()).includes('RESGATE');
+  const texto = normalize(pesquisaTexto());
+  if(isResgateAplicacao(memo) && !texto.includes('RESGATE')) return true;
+  if(isDevolucao(memo) && !texto.includes('DEVOLU') && !texto.includes('ESTORNO')) return true;
+  return false;
 }
 
 function matchesSearch(r){
@@ -4734,7 +4737,7 @@ function renderResultsBase(){
     ].filter(item => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(item.tipo)) return false;
-      if(item.tipo === 'entrada' && resgateForaDaPesquisaPorTipo(item.tx.memo)) return false;
+      if(item.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(item.tx.memo)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const t = item.tx;
@@ -4996,7 +4999,7 @@ function renderResultsBase(){
     const list = credits.slice().sort((a,b)=> b.date - a.date).filter(c => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa('entrada')) return false;
-      if(resgateForaDaPesquisaPorTipo(c.memo)) return false;
+      if(movimentoInternoForaDaPesquisaPorTipo(c.memo)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const hay = normalize([c.cliente, c.memo, c.nf].join(' '));
@@ -5056,7 +5059,7 @@ function renderResultsBase(){
     ].sort((a,b)=> b.date - a.date).filter(m => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(m.tipo)) return false;
-      if(m.tipo === 'entrada' && resgateForaDaPesquisaPorTipo(m.memo)) return false;
+      if(m.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(m.memo)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const hay = normalize([m.memo, m.nome].join(' '));
