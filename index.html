@@ -315,6 +315,10 @@
     flex:1; min-width:220px; max-width:360px;
     padding:8px 12px; border:1px solid var(--line); border-radius:3px; font-family:sans-serif; font-size:13px;
   }
+  .soma-pesquisa{
+    display:none; flex:1; min-width:220px; font-family:sans-serif; font-size:13px; font-weight:700;
+    color:var(--navy); background:#EEF5EA; border:1px solid var(--ok); border-radius:4px; padding:7px 12px;
+  }
   .btn-export{
     background:var(--ok); color:#fff; border:none; padding:9px 16px; border-radius:3px;
     font-family:sans-serif; font-weight:600; font-size:13px; cursor:pointer;
@@ -673,6 +677,7 @@
 
     <div class="toolbar">
       <input type="text" class="search-box" id="searchBox" placeholder="Buscar por favorecido, empresa, cliente, centro de custo, valor...">
+      <div class="soma-pesquisa" id="somaPesquisa"></div>
       <button class="btn-export" id="btnExport">Exportar relatório conciliado (.xlsx)</button>
     </div>
 
@@ -4668,7 +4673,30 @@ function matchesSearch(r){
   return valorMatchesSearch(r.valor, searchTerm);
 }
 
+// Soma do que a pesquisa está mostrando na aba atual. Cada aba registra a sua no ponto em que
+// filtra as linhas, então o total sempre bate com o que aparece na tabela.
+let somaPesquisaAtual = null;
+function registrarSomaPesquisa(qtd, partes){
+  somaPesquisaAtual = { qtd, partes: partes.map(p => ({ rotulo: p.rotulo, valor: Math.round(p.valor * 100) / 100 })) };
+}
+function somarValores(lista, getValor){
+  return lista.reduce((a, x) => a + (Number(getValor(x)) || 0), 0);
+}
+function mostrarSomaPesquisa(){
+  const el = document.getElementById('somaPesquisa');
+  if(!el) return;
+  if(!searchTerm || !somaPesquisaAtual){ el.style.display = 'none'; el.textContent = ''; return; }
+  const { qtd, partes } = somaPesquisaAtual;
+  el.style.display = 'block';
+  if(qtd === 0){ el.textContent = 'Nenhum resultado para somar.'; return; }
+  el.textContent = 'Σ ' + qtd + ' resultado(s) · ' + partes.filter(p => p.valor !== 0).map(p => p.rotulo + ' R$ ' + fmtMoney(p.valor)).join(' · ');
+}
 function renderResults(){
+  somaPesquisaAtual = null;
+  renderResultsBase();
+  mostrarSomaPesquisa();
+}
+function renderResultsBase(){
   renderSummary();
   const wrap = document.getElementById('tableWrap');
 
@@ -4682,6 +4710,10 @@ function renderResults(){
       const hay = normalize([t.memo, t.name, t.cliente||'', t.fornecedor||''].join(' '));
       return hay.includes(normalize(searchTerm)) || valorMatchesSearch(t.amount, searchTerm);
     }).sort((a,b) => b.tx.date - a.tx.date);
+    registrarSomaPesquisa(todos.length, [
+      { rotulo:'Entradas', valor: somarValores(todos.filter(i => i.tipo === 'entrada'), i => Math.abs(i.tx.amount)) },
+      { rotulo:'Saídas',   valor: somarValores(todos.filter(i => i.tipo === 'saida'),   i => Math.abs(i.tx.amount)) }
+    ]);
 
     if(todos.length === 0){
       wrap.innerHTML = '<div class="empty-state">Nenhum lançamento encontrado.</div>';
@@ -4874,6 +4906,7 @@ function renderResults(){
     const rowsReceber = reportReceber.filter(n => (n.resultado === 'warn' || n.resultado === 'bad') && !foiRevisadaManualmenteNF(n) && (
       !searchTerm || normalize([n.nomeCliente, n.numeroNF, n.cnpjCliente].join(' ')).includes(normalize(searchTerm)) || valorMatchesSearch(n.valorLiquido, searchTerm)
     ));
+    registrarSomaPesquisa(rowsReceber.length, [{ rotulo:'Notas fiscais', valor: somarValores(rowsReceber, n => n.valorLiquido) }]);
     if(!nfseRaw){
       wrap.innerHTML = '<div class="empty-state">Nenhum arquivo de notas fiscais foi enviado nessa conciliação. Suba o arquivo "03 · Notas fiscais emitidas" na tela de upload pra ativar essa aba.</div>';
       return;
@@ -4934,6 +4967,7 @@ function renderResults(){
       const hay = normalize([c.cliente, c.memo, c.nf].join(' '));
       return hay.includes(normalize(searchTerm)) || valorMatchesSearch(c.amount, searchTerm);
     });
+    registrarSomaPesquisa(list.length, [{ rotulo:'Recebimentos', valor: somarValores(list, c => Math.abs(c.amount)) }]);
     if(list.length===0){
       wrap.innerHTML = '<div class="empty-state">Nenhum recebimento de cliente encontrado no extrato.</div>';
       return;
@@ -4989,6 +5023,10 @@ function renderResults(){
       const hay = normalize([m.memo, m.nome].join(' '));
       return hay.includes(normalize(searchTerm)) || valorMatchesSearch(m.amount, searchTerm);
     });
+    registrarSomaPesquisa(movRows.length, [
+      { rotulo:'Entradas', valor: somarValores(movRows.filter(m => m.tipo === 'entrada'), m => m.amount) },
+      { rotulo:'Saídas',   valor: somarValores(movRows.filter(m => m.tipo === 'saida'),   m => m.amount) }
+    ]);
     if(movRows.length===0){
       wrap.innerHTML = '<div class="empty-state">Nenhum lançamento encontrado.</div>';
       return;
@@ -5174,6 +5212,7 @@ function renderResults(){
   const rows = currentTab === 'pendentes'
     ? report.filter(r => (r.resultado === 'warn' || r.resultado === 'bad') && !foiRevisadaManualmente(r) && matchesSearch(r))
     : report.filter(r => r.resultado === currentTab && matchesSearch(r));
+  registrarSomaPesquisa(rows.length, [{ rotulo:'Linhas do relatório', valor: somarValores(rows, r => r.valor) }]);
   if(rows.length===0 && currentTab !== 'pendentes'){
     wrap.innerHTML = '<div class="empty-state">Nada por aqui — bom sinal 🎉</div>';
     return;
@@ -5252,6 +5291,10 @@ function renderResults(){
     const debitsPend = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente' && (
       !searchTerm || normalize([d.memo, d.name, d.fornecedor].join(' ')).includes(normalize(searchTerm)) || valorMatchesSearch(d.amount, searchTerm)
     )).sort((a,b)=> b.date - a.date);
+    registrarSomaPesquisa(rows.length + debitsPend.length, [
+      { rotulo:'Linhas do relatório', valor: somarValores(rows, r => r.valor) },
+      { rotulo:'Extrato sem vínculo', valor: somarValores(debitsPend, d => Math.abs(d.amount)) }
+    ]);
 
     if(rows.length === 0 && debitsPend.length === 0){
       wrap.innerHTML = '<div class="empty-state">Nada por aqui — bom sinal 🎉</div>';
