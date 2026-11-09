@@ -2105,6 +2105,7 @@ function deserializeSession(snap){
     candidates: (n.candidateFitids||[]).map(c => ({tx: creditFitidMap[c.fitid], dateDiff:c.dateDiff, nameScore:c.nameScore})).filter(c=>c.tx),
     manualConfirm: n.manualConfirm, excludedReason: n.excludedReason, matchedByNF: n.matchedByNF || false
   }));
+  if(completarPadroesAoAbrir()) setTimeout(() => { try{ persistCurrentSession(); }catch(e){} }, 0);
 }
 
 // Fila de salvamento: sem isso, se dois campos forem editados rapidinho (ex: tabulando por
@@ -2883,8 +2884,25 @@ function isLiquidacaoCobranca(memo){
 }
 function aplicarPadraoLiquidacaoCobranca(c){
   c.cliente = CLIENTE_LIQUIDACAO_COBRANCA;
-  if(!c.centroCusto) c.centroCusto = CC_RECEBIMENTO_A_DEVOLVER;
+  // Todo crédito já nasce com o centro de custo padrão de recebimentos; aqui ele é trocado pelo
+  // "a devolver". Um centro de custo diferente do padrão (escolhido pela pessoa) é mantido.
+  const campoPadrao = document.getElementById('cfgCentroCustoReceber');
+  const padraoReceb = campoPadrao ? campoPadrao.value : '';
+  if(!c.centroCusto || c.centroCusto === padraoReceb) c.centroCusto = CC_RECEBIMENTO_A_DEVOLVER;
   if(!c.projeto) c.projeto = PROJETO_DIVERSOS;
+}
+// Ao reabrir uma conciliação já salva não há reclassificação, então regras criadas depois do
+// salvamento não chegavam nela. Aqui os créditos de liquidação de cobrança ainda sem cliente
+// recebem o padrão ao abrir. Devolve true se mudou alguma linha.
+function completarPadroesAoAbrir(){
+  let mudou = false;
+  credits.forEach(c => {
+    if(isLiquidacaoCobranca(c.memo) && !c.used && !c.cliente){
+      aplicarPadraoLiquidacaoCobranca(c);
+      mudou = true;
+    }
+  });
+  return mudou;
 }
 function isResgateAplicacao(memo){
   return normalize(memo).includes('RESGATE');
