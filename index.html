@@ -335,6 +335,7 @@
   table.results tr:nth-child(even) td{ background:#FBFAF5; }
   table.results .valor{ font-family:'IBM Plex Mono',monospace; text-align:right; white-space:nowrap; }
   table.results .data{ font-family:'IBM Plex Mono',monospace; white-space:nowrap; }
+  table.results .col-num{ width:38px; text-align:right; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; font-size:11px; white-space:nowrap; padding-right:6px; }
 
   .pill{
     display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700;
@@ -4728,10 +4729,14 @@ function renderResultsBase(){
   const wrap = document.getElementById('tableWrap');
 
   if(currentTab === 'extratoCompleto'){
-    const todos = [
+    const baseTodos = [
       ...debits.map(d => ({ tipo:'saida', tx:d })),
       ...credits.map(c => ({ tipo:'entrada', tx:c }))
-    ].filter(item => {
+    ].sort((a,b) => b.tx.date - a.tx.date);
+    // O número de cada linha é a posição dela na lista inteira, então continua o mesmo quando se
+    // pesquisa: dá pra anotar "parei na linha 87" e achar de novo depois.
+    const posicaoGeral = new Map(baseTodos.map((item, i) => [item.tx, i + 1]));
+    const todos = baseTodos.filter(item => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(item.tipo)) return false;
       if(item.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(item.tx.memo, item.tx.movInternoDesfeito)) return false;
@@ -4740,7 +4745,7 @@ function renderResultsBase(){
       const t = item.tx;
       const hay = normalize([t.memo, t.name, t.cliente||'', t.fornecedor||''].join(' '));
       return hay.includes(normalize(txt)) || valorMatchesSearch(t.amount, txt);
-    }).sort((a,b) => b.tx.date - a.tx.date);
+    });
     registrarSomaPesquisa(todos.length, [
       { rotulo:'Entradas', valor: somarValores(todos.filter(i => i.tipo === 'entrada'), i => Math.abs(i.tx.amount)) },
       { rotulo:'Saídas',   valor: somarValores(todos.filter(i => i.tipo === 'saida'),   i => Math.abs(i.tx.amount)) }
@@ -4752,7 +4757,7 @@ function renderResultsBase(){
     }
 
     let html = `<table class="results"><thead><tr>
-      <th>Data</th><th>Tipo</th><th>Valor</th><th>Memo</th><th>Situação</th><th>Ação</th>
+      <th class="col-num">Nº</th><th>Data</th><th>Tipo</th><th>Valor</th><th>Memo</th><th>Situação</th><th>Ação</th>
     </tr></thead><tbody>`;
     todos.forEach((item, idx) => {
       const t = item.tx;
@@ -4827,6 +4832,7 @@ function renderResultsBase(){
       }
 
       html += `<tr>
+        <td class="col-num">${posicaoGeral.get(t)}</td>
         <td class="data">${fmtDateISOtoBR(t.date)}</td>
         <td>${tipoPill}</td>
         <td class="valor">${fmtMoney(Math.abs(t.amount))}</td>
@@ -4949,10 +4955,11 @@ function renderResultsBase(){
       return;
     }
     let html = `<table class="results"><thead><tr>
-      <th>Nº NF</th><th>Cliente</th><th>CNPJ</th><th>Valor líquido</th><th>Emitida em</th><th>Situação</th><th>Recebimento no extrato / motivo</th>
+      <th class="col-num">Nº</th><th>Nº NF</th><th>Cliente</th><th>CNPJ</th><th>Valor líquido</th><th>Emitida em</th><th>Situação</th><th>Recebimento no extrato / motivo</th>
     </tr></thead><tbody>`;
-    rowsReceber.forEach(n => {
+    rowsReceber.forEach((n, ln) => {
       html += `<tr>
+        <td class="col-num">${ln + 1}</td>
         <td class="mono" style="font-size:11.5px;">${n.numeroNF}</td>
         <td style="font-size:12.5px;">${n.nomeCliente}</td>
         <td class="mono" style="font-size:11px;color:var(--ink-soft);">${n.cnpjCliente}</td>
@@ -5010,11 +5017,12 @@ function renderResultsBase(){
       return;
     }
     let html = `<table class="results"><thead><tr>
-      <th>Data</th><th>Valor</th><th>Memo (extrato)</th><th>Cliente</th><th>Nº NF</th><th>Centro de custo</th><th>Projeto</th><th>Observações</th>
+      <th class="col-num">Nº</th><th>Data</th><th>Valor</th><th>Memo (extrato)</th><th>Cliente</th><th>Nº NF</th><th>Centro de custo</th><th>Projeto</th><th>Observações</th>
     </tr></thead><tbody>`;
-    list.forEach((c) => {
+    list.forEach((c, ln) => {
       const idx = credits.indexOf(c);
       html += `<tr>
+        <td class="col-num">${ln + 1}</td>
         <td class="data">${fmtDateISOtoBR(c.date)}</td>
         <td class="valor">${fmtMoney(Math.abs(c.amount))}</td>
         <td style="font-size:12px;color:var(--ink-soft);">${c.memo}${c.used ? ` <span class="badge-id">🔗 NF confirmada</span> <button class="link-btn" onclick="desvincularNota('${c.fitid}')">🔓 Desvincular</button>` : ''}</td>
@@ -5073,11 +5081,12 @@ function renderResultsBase(){
       return;
     }
     let html = `<table class="results"><thead><tr>
-      <th>Data</th><th>Tipo</th><th>Valor</th><th>Memo</th><th>Fornecedor / Cliente</th><th>Status</th>
+      <th class="col-num">Nº</th><th>Data</th><th>Tipo</th><th>Valor</th><th>Memo</th><th>Fornecedor / Cliente</th><th>Status</th>
     </tr></thead><tbody>`;
-    movRows.forEach(m => {
+    movRows.forEach((m, ln) => {
       const tipoPill = m.tipo === 'entrada' ? '<span class="pill ok">Entrada</span>' : '<span class="pill bad">Saída</span>';
       html += `<tr>
+        <td class="col-num">${ln + 1}</td>
         <td class="data">${fmtDateISOtoBR(m.date)}</td>
         <td>${tipoPill}</td>
         <td class="valor">${m.tipo==='entrada' ? '+' : '-'} ${fmtMoney(m.amount)}</td>
@@ -5262,13 +5271,14 @@ function renderResultsBase(){
   let html = '';
   if(rows.length > 0){
     html += `<table class="results"><thead><tr>
-      <th>ID</th><th>Empresa</th><th>Centro de custo</th><th>Projeto</th><th>Fornecedor</th><th>Valor</th><th>Pago em</th><th>Observações</th>`;
+      <th class="col-num">Nº</th><th>ID</th><th>Empresa</th><th>Centro de custo</th><th>Projeto</th><th>Fornecedor</th><th>Valor</th><th>Pago em</th><th>Observações</th>`;
     if(currentTab === 'ok') html += `<th>Lançamento vinculado</th>`;
     if(currentTab === 'pendentes') html += `<th>Situação</th><th>Pagamentos no extrato / motivo</th>`;
     html += `</tr></thead><tbody>`;
 
-    rows.forEach(r => {
+    rows.forEach((r, ln) => {
       html += `<tr>
+        <td class="col-num">${ln + 1}</td>
         <td class="mono" style="font-size:11.5px;">${r.idReport}</td>
         <td style="font-size:12.5px;">${r.empresa}</td>
         <td>${buildAutocompleteInput('centroCusto', r.centroCusto, '— Centro de custo —', `data-rowidx="${r.rowIndex}" data-campo="report-cc"`)}</td>
@@ -5345,10 +5355,11 @@ function renderResultsBase(){
     if(debitsPend.length > 0){
       html += `<h4 class="section-title">Lançamentos do extrato sem vínculo no relatório (só saem daqui quando você identificar)</h4>`;
       html += `<table class="results"><thead><tr>
-        <th>Data</th><th>Valor</th><th>Memo</th><th>Fornecedor (informe quem é)</th><th>Centro de custo</th><th>Projeto</th><th>Observações</th><th></th>
+        <th class="col-num">Nº</th><th>Data</th><th>Valor</th><th>Memo</th><th>Fornecedor (informe quem é)</th><th>Centro de custo</th><th>Projeto</th><th>Observações</th><th></th>
       </tr></thead><tbody>`;
-      debitsPend.forEach(d => {
+      debitsPend.forEach((d, ln) => {
         html += `<tr>
+          <td class="col-num">${ln + 1}</td>
           <td class="data">${fmtDateISOtoBR(d.date)}</td>
           <td class="valor">${fmtMoney(Math.abs(d.amount))}</td>
           <td style="font-size:12px;color:var(--ink-soft);">${d.memo}${d.name ? ' · '+d.name : ''}</td>
