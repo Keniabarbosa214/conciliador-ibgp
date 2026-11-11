@@ -2397,7 +2397,7 @@ async function gerarFechamentoMensal(){
   const totalCreditos = creditosArr.reduce((s,c)=>s+Math.abs(c.amount),0);
   const debitosConciliados = debitosArr.filter(d=>d.used || d.identStatus==='auto' || d.identStatus==='manual' || d.estornado).length;
   const debitosPendentes = debitosArr.length - debitosConciliados;
-  const creditosConciliados = creditosArr.filter(c=>c.used || c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)).length;
+  const creditosConciliados = creditosArr.filter(c=>c.used || c.cliente || creditoEhMovimentoInterno(c)).length;
   const creditosPendentes = creditosArr.length - creditosConciliados;
   const reportOk = reportArr.filter(r=>r.resultado==='ok').length;
   const reportPendente = reportArr.length - reportOk;
@@ -2422,7 +2422,7 @@ async function gerarFechamentoMensal(){
   creditosArr.forEach(c => {
     let situacaoTxt, situacaoCor;
     if(c.used){ situacaoTxt = '✅ Conciliado (NF)'; situacaoCor = 'var(--ok)'; }
-    else if(isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)){ situacaoTxt = '🔄 Movimento interno'; situacaoCor = 'var(--warn)'; }
+    else if(creditoEhMovimentoInterno(c)){ situacaoTxt = '🔄 Movimento interno'; situacaoCor = 'var(--warn)'; }
     else if(c.cliente){ situacaoTxt = '✅ Identificado manual'; situacaoCor = 'var(--ok)'; }
     else { situacaoTxt = '🔧 A conciliar'; situacaoCor = 'var(--bad)'; }
     linhasDetalhe.push({ data: c.date, tipo: 'Entrada', valor: Math.abs(c.amount), sinal: '+',
@@ -2505,9 +2505,9 @@ function exportarFechamentoMensal(){
     }
     let situacao;
     if(c.used) situacao = 'Conciliado (nota fiscal)';
-    else if(isResgateAplicacao(c.memo)) situacao = 'Movimento interno (resgate)';
-    else if(isDevolucao(c.memo)) situacao = 'Movimento interno (devolução)';
-    else if(isMesmaTitularidade(c.memo)) situacao = 'Movimento interno (mesma titularidade)';
+    else if(creditoEhResgate(c)) situacao = 'Movimento interno (resgate)';
+    else if(creditoEhDevolucao(c)) situacao = 'Movimento interno (devolução)';
+    else if(creditoEhMesmaTit(c)) situacao = 'Movimento interno (mesma titularidade)';
     else if(c.cliente) situacao = 'Identificado manualmente';
     else situacao = 'Pendente';
     linhas.push({
@@ -2923,6 +2923,13 @@ function completarPadroesAoAbrir(){
 function isResgateAplicacao(memo){
   return normalize(memo).includes('RESGATE');
 }
+// Um crédito reconhecido automaticamente como movimento interno (resgate, devolução, estorno ou
+// transferência entre contas próprias) pode ser desfeito pela pessoa quando o sistema errou:
+// c.movInternoDesfeito passa a valer, e ele vira um recebimento comum a identificar.
+function creditoEhResgate(c){ return !c.movInternoDesfeito && isResgateAplicacao(c.memo); }
+function creditoEhDevolucao(c){ return !c.movInternoDesfeito && isDevolucao(c.memo); }
+function creditoEhMesmaTit(c){ return !c.movInternoDesfeito && isMesmaTitularidade(c.memo); }
+function creditoEhMovimentoInterno(c){ return creditoEhResgate(c) || creditoEhDevolucao(c) || creditoEhMesmaTit(c); }
 function isDevolucao(memo){
   const m = normalize(memo);
   return m.includes('DEVOLU') || m.includes('ESTORNO');
@@ -3631,7 +3638,7 @@ async function runReconciliation(opts){
     });
     credits.forEach(c => {
       prevCreditsByFitid[c.fitid] = c;
-      const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
+      const cResolvido = c.used || !!c.cliente || !!c.movInternoDesfeito || creditoEhMovimentoInterno(c);
       if(cResolvido){
         const ck = chaveConteudoTx(c.date, c.amount, c.memo);
         (prevCreditsByConteudo[ck] = prevCreditsByConteudo[ck] || []).push(c);
@@ -3673,7 +3680,7 @@ async function runReconciliation(opts){
           if(!arrVd.some(x => x.fitid === d.fitid)) arrVd.push(d);
         });
         (snap.credits||[]).forEach(c => {
-          const cResolvido = c.used || !!c.cliente || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
+          const cResolvido = c.used || !!c.cliente || !!c.movInternoDesfeito || creditoEhMovimentoInterno(c);
           if(!cResolvido) return;
           const ck = chaveConteudoTx(c.date, c.amount, c.memo);
           const arr = prevCreditsByConteudo[ck] = prevCreditsByConteudo[ck] || [];
@@ -3768,7 +3775,7 @@ async function runReconciliation(opts){
   credits.forEach(c => {
     c.cliente = cleanClientName(c.name, c.memo);
     c.nf = extractNF(c.memo, c.name);
-    const ehMovimentoInterno = isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo);
+    const ehMovimentoInterno = creditoEhMovimentoInterno(c);
     c.centroCusto = c.centroCusto || (ehMovimentoInterno ? '' : centroCustoReceberPadrao);
     c.projeto = c.projeto || '';
     c.observacoes = c.observacoes || '';
@@ -3893,6 +3900,7 @@ async function runReconciliation(opts){
         c.projeto = prev.projeto;
         c.observacoes = prev.observacoes;
         if(temRateio(prev)) c.rateio = prev.rateio.map(p => ({...p}));
+        if(prev.movInternoDesfeito) c.movInternoDesfeito = true;
       }
     });
   }
@@ -3914,7 +3922,7 @@ async function runReconciliation(opts){
     }
   });
   credits.forEach(c => {
-    if(isRDC(c.memo) && !isMesmaTitularidade(c.memo)){
+    if(isRDC(c.memo) && !isMesmaTitularidade(c.memo) && !c.movInternoDesfeito){
       c.cliente = 'IBGP/Sicoob';
       c.centroCusto = '32000 - Investimento';
       c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
@@ -3955,22 +3963,9 @@ async function runReconciliation(opts){
   // Detectar pares de estorno: uma saída (débito) revertida por uma devolução (crédito) do
   // mesmo valor, em data próxima. O débito revertido nunca chegou a ser um pagamento efetivo,
   // então ele não deve concorrer como sugestão de conciliação, e a devolução não é receita real.
-  credits.forEach(c => { c.isDevolucao = isDevolucao(c.memo); c.estornoDebitFitid = null; });
+  credits.forEach(c => { c.isDevolucao = creditoEhDevolucao(c); c.estornoDebitFitid = null; });
   debits.forEach(d => { d.estornado = false; d.estornoCreditFitid = null; });
-  credits.filter(c => c.isDevolucao).forEach(c => {
-    let best = null, bestDiff = Infinity;
-    debits.forEach(d => {
-      if(d.estornado) return;
-      if(Math.abs(Math.abs(d.amount) - Math.abs(c.amount)) > 0.005) return;
-      const diff = Math.abs(daysBetween(d.date, c.date));
-      if(diff <= 5 && diff < bestDiff){ best = d; bestDiff = diff; }
-    });
-    if(best){
-      best.estornado = true;
-      best.estornoCreditFitid = c.fitid;
-      c.estornoDebitFitid = best.fitid;
-    }
-  });
+  credits.filter(c => c.isDevolucao).forEach(c => parearEstornoDoCredito(c));
 
   if(ofxFormat === 'xls'){
     const datasOrdenadas = saldosDiarios.slice().sort((a,b)=> a.date - b.date);
@@ -4315,7 +4310,7 @@ async function runReconciliation(opts){
       // Passo 1 — cruzamento pelo número da NF, quando o cliente cita ele no PIX/TED recebido
       reportReceber.forEach(n => {
         if(n.resultado) return; // já resolvido pela restauração acima
-        const candidatosPorNF = credits.filter(c => !c.used && !temRateio(c) && !isMesmaTitularidade(c.memo) && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && c.nf && String(c.nf) === String(n.numeroNF));
+        const candidatosPorNF = credits.filter(c => !c.used && !temRateio(c) && !creditoEhMovimentoInterno(c) && c.nf && String(c.nf) === String(n.numeroNF));
         if(candidatosPorNF.length === 1){
           const c = candidatosPorNF[0];
           n.matchedTx = c; c.used = true; n.resultado = 'ok'; n.matchedByNF = true;
@@ -4328,7 +4323,7 @@ async function runReconciliation(opts){
       elegiveisReceber.forEach(n => {
         const cands = credits.filter(c => {
           if(c.used || temRateio(c) || !c.date) return false;
-          if(isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false; // movimento interno, não é receita de cliente
+          if(creditoEhMovimentoInterno(c)) return false; // movimento interno, não é receita de cliente
           const amtMatch = Math.abs(Math.abs(c.amount) - n.valorLiquido) < 0.01 || Math.abs(Math.abs(c.amount) - n.valorServico) < 0.01;
           const dateMatch = Math.abs(daysBetween(c.date, n.dataEmissao)) <= windowReceberDays;
           return amtMatch && dateMatch;
@@ -4425,9 +4420,9 @@ function renderSummary(){
 
   const totalDebitosPeriodo = debits.reduce((s,d)=> s + Math.abs(d.amount), 0);
   const totalCreditosPeriodo = credits.reduce((s,c)=> s + Math.abs(c.amount), 0);
-  const totalResgates = credits.filter(c=>isResgateAplicacao(c.memo)).reduce((s,c)=> s + Math.abs(c.amount), 0);
+  const totalResgates = credits.filter(c=>creditoEhResgate(c)).reduce((s,c)=> s + Math.abs(c.amount), 0);
   const totalDevolucoes = credits.filter(c=>c.isDevolucao).reduce((s,c)=> s + Math.abs(c.amount), 0);
-  const totalMesmaTitCredito = credits.filter(c=>isMesmaTitularidade(c.memo)).reduce((s,c)=> s + Math.abs(c.amount), 0);
+  const totalMesmaTitCredito = credits.filter(c=>creditoEhMesmaTit(c)).reduce((s,c)=> s + Math.abs(c.amount), 0);
   const totalCreditosEfetivos = totalCreditosPeriodo - totalResgates - totalDevolucoes - totalMesmaTitCredito;
 
   // Lançamentos/linhas que JÁ estão identificados/conciliados, mas sem Centro de Custo e/ou
@@ -4444,7 +4439,7 @@ function renderSummary(){
   }).length;
   const creditosSemCCProjeto = credits.filter(c => {
     const resolvido = c.used || !!c.cliente;
-    if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return false;
+    if(!resolvido || creditoEhMovimentoInterno(c)) return false;
     if(temRateio(c)) return false; // a divisão só é salva com centro de custo e projeto em todas as partes
     return faltaCCouProjeto(c.centroCusto, c.projeto);
   }).length;
@@ -4492,7 +4487,7 @@ function renderSummary(){
 
   const debitosPendentesId = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente').length;
   const debitosACompletar = debits.filter(d => !d.used && !d.estornado && d.identStatus === 'pendente').length;
-  const creditosACompletar = credits.filter(c => !c.used && !c.cliente && !isResgateAplicacao(c.memo) && !isDevolucao(c.memo) && !isMesmaTitularidade(c.memo)).length;
+  const creditosACompletar = credits.filter(c => !c.used && !c.cliente && !creditoEhMovimentoInterno(c)).length;
 
   document.getElementById('cPend').textContent = '(' + (warn+bad+debitosPendentesId) + ')';
   document.getElementById('cOk').textContent = '(' + ok + ')';
@@ -4686,7 +4681,8 @@ function combinaTipoPesquisa(tipoItem){
 // "entrada" na pesquisa não traz resgate de aplicação nem devolução/estorno: é dinheiro voltando,
 // não recebimento. Cada um só aparece se a pesquisa mencionar a palavra ("resgate", "devolução"
 // ou "estorno").
-function movimentoInternoForaDaPesquisaPorTipo(memo){
+function movimentoInternoForaDaPesquisaPorTipo(memo, desfeito){
+  if(desfeito) return false; // movimento interno desfeito é um recebimento comum
   if(pesquisaTipo() !== 'entrada') return false;
   const texto = normalize(pesquisaTexto());
   if(isResgateAplicacao(memo) && !texto.includes('RESGATE')) return true;
@@ -4738,7 +4734,7 @@ function renderResultsBase(){
     ].filter(item => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(item.tipo)) return false;
-      if(item.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(item.tx.memo)) return false;
+      if(item.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(item.tx.memo, item.tx.movInternoDesfeito)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const t = item.tx;
@@ -4803,12 +4799,13 @@ function renderResultsBase(){
             ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
             <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="${t.valorDivergenteNF ? 'Explique a diferença de valor (opcional)' : 'Observações (opcional)'}">
             <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desvincularNota('${rowKey}')">↩️ Desfazer (voltar a pendente)</button>`;
-        } else if(isResgateAplicacao(t.memo) || isDevolucao(t.memo) || isMesmaTitularidade(t.memo)){
+        } else if(creditoEhMovimentoInterno(t)){
           situacaoHtml = '<span class="pill warn">🔄 Movimento interno</span>';
-          acaoHtml = `<span style="font-size:11.5px;color:var(--ink-soft);">${(isMesmaTitularidade(t.memo) ? 'Transferência mesma titularidade' : 'Resgate/devolução')} — não é receita nova, mas pode anotar:</span>
+          acaoHtml = `<span style="font-size:11.5px;color:var(--ink-soft);">${(creditoEhMesmaTit(t) ? 'Transferência mesma titularidade' : 'Resgate/devolução')} — não é receita nova, mas pode anotar:</span>
             ${buildAutocompleteInput('centroCusto', t.centroCusto, '— Centro de custo —', `data-fitid="${rowKey}" data-modo="credito" data-campo="cc"`)}
             ${buildAutocompleteInput('projeto', t.projeto, '— Projeto —', `data-fitid="${rowKey}" data-modo="credito" data-campo="proj"`)}
-            <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="Observações (opcional)">`;
+            <input type="text" class="edit-inline extrato-obs-input" data-fitid="${rowKey}" data-modo="credito" value="${(t.observacoes||'').toString().replace(/"/g,'&quot;')}" placeholder="Observações (opcional)">
+            <button class="link-btn" style="margin-top:4px;color:var(--bad);" onclick="desfazerMovimentoInterno('${rowKey}')">↩️ Desfazer (não é movimento interno)</button>`;
         } else if(temRateio(t)){
           situacaoHtml = '<span class="pill ok">✅ Identificado manualmente</span>';
           acaoHtml = `<div style="font-size:11.5px;margin-bottom:4px;"><b>✂️ Dividido em ${t.rateio.length} partes</b></div>
@@ -4853,6 +4850,7 @@ function renderResultsBase(){
           <div class="criar-lancamento-area" style="margin-top:6px;">
             <button class="link-btn" style="text-decoration:none;color:var(--navy);font-weight:600;" onclick="toggleCriarLancamento('${rowKey}','${item.tipo}')">➕ Não tem no relatório? Identificar manualmente</button>
             ${item.tipo === 'entrada' ? `<button class="link-btn" style="text-decoration:none;color:var(--navy);font-weight:600;margin-left:10px;" onclick="abrirDivisaoRecebimento('${rowKey}')">✂️ Dividir entre projetos</button>` : ''}
+            ${(item.tipo === 'entrada' && item.tx.movInternoDesfeito) ? `<button class="link-btn" style="text-decoration:none;color:var(--ink-soft);margin-left:10px;" onclick="restaurarMovimentoInterno('${rowKey}')">🔄 Voltar a movimento interno</button>` : ''}
             <div id="criarLancamento-${rowKey}" style="display:none;margin-top:6px;"></div>
           </div>
         </td>`;
@@ -5000,7 +4998,7 @@ function renderResultsBase(){
     const list = credits.slice().sort((a,b)=> b.date - a.date).filter(c => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa('entrada')) return false;
-      if(movimentoInternoForaDaPesquisaPorTipo(c.memo)) return false;
+      if(movimentoInternoForaDaPesquisaPorTipo(c.memo, c.movInternoDesfeito)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const hay = normalize([c.cliente, c.memo, c.nf].join(' '));
@@ -5052,15 +5050,15 @@ function renderResultsBase(){
     const movRows = [
       ...debits.map(d => ({ tipo:'saida', date:d.date, amount:Math.abs(d.amount), memo:d.memo, nome: d.fornecedor || d.name,
         status: d.estornado ? '🔄 Estornado (pagamento não efetivado)' : d.used ? 'Conciliado' : (d.identStatus==='auto' ? 'Identificado (banco)' : d.identStatus==='manual' ? 'Identificado manualmente' : 'Pendente') })),
-      ...credits.map(c => ({ tipo:'entrada', date:c.date, amount:Math.abs(c.amount), memo:c.memo, nome:c.cliente,
-        status: isMesmaTitularidade(c.memo) ? '🔄 Movimento interno (mesma titularidade)' :
-          isResgateAplicacao(c.memo) ? '🔄 Movimento interno (resgate)' :
-          isDevolucao(c.memo) ? '🔄 Devolução (não é receita)' :
+      ...credits.map(c => ({ tipo:'entrada', date:c.date, amount:Math.abs(c.amount), memo:c.memo, nome:c.cliente, desfeito: !!c.movInternoDesfeito,
+        status: creditoEhMesmaTit(c) ? '🔄 Movimento interno (mesma titularidade)' :
+          creditoEhResgate(c) ? '🔄 Movimento interno (resgate)' :
+          creditoEhDevolucao(c) ? '🔄 Devolução (não é receita)' :
           c.used ? 'Conciliado' : (c.cliente ? 'Identificado manualmente' : 'Pendente') }))
     ].sort((a,b)=> b.date - a.date).filter(m => {
       if(!searchTerm) return true;
       if(!combinaTipoPesquisa(m.tipo)) return false;
-      if(m.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(m.memo)) return false;
+      if(m.tipo === 'entrada' && movimentoInternoForaDaPesquisaPorTipo(m.memo, m.desfeito)) return false;
       const txt = pesquisaTexto();
       if(!txt) return true;
       const hay = normalize([m.memo, m.nome].join(' '));
@@ -5111,7 +5109,7 @@ function renderResultsBase(){
     });
     credits.forEach(c => {
       const resolvido = c.used || !!c.cliente;
-      if(!resolvido || isResgateAplicacao(c.memo) || isDevolucao(c.memo) || isMesmaTitularidade(c.memo)) return;
+      if(!resolvido || creditoEhMovimentoInterno(c)) return;
       if(temRateio(c)) return;
       if(faltaCCouProjetoCtrl(c.centroCusto, c.projeto)){
         itensSemCCProjeto.push({ tipo:'Entrada', data:c.date, valor:Math.abs(c.amount), nome:c.cliente, fitid:c.fitid, modo:'credito', cc:c.centroCusto, proj:c.projeto });
@@ -5771,6 +5769,62 @@ function toggleCriarLancamento(fitid, tipo){
   if(abrindo) renderCriarLancamento(fitid, tipo);
 }
 
+// Liga uma devolução (crédito) ao pagamento (débito) de mesmo valor, até 5 dias de distância,
+// que ela reverteu; esse pagamento fica como "Estornado".
+function parearEstornoDoCredito(c){
+  let best = null, bestDiff = Infinity;
+  debits.forEach(d => {
+    if(d.estornado) return;
+    if(Math.abs(Math.abs(d.amount) - Math.abs(c.amount)) > 0.005) return;
+    const diff = Math.abs(daysBetween(d.date, c.date));
+    if(diff <= 5 && diff < bestDiff){ best = d; bestDiff = diff; }
+  });
+  if(best){
+    best.estornado = true;
+    best.estornoCreditFitid = c.fitid;
+    c.estornoDebitFitid = best.fitid;
+  }
+}
+
+// ===================== DESFAZER MOVIMENTO INTERNO =====================
+function desfazerMovimentoInterno(fitid){
+  const c = credits.find(x => x.fitid === fitid);
+  if(!c) return;
+  if(!confirm('Desfazer o movimento interno? Esse lançamento passa a contar como um recebimento comum, pendente de identificação. Se ele estiver ligado a um pagamento marcado como estornado, esse pagamento volta a ficar pendente.')) return;
+  c.movInternoDesfeito = true;
+  c.isDevolucao = false;
+  if(c.estornoDebitFitid){
+    const d = debits.find(x => x.fitid === c.estornoDebitFitid);
+    if(d){ d.estornado = false; d.estornoCreditFitid = null; }
+    c.estornoDebitFitid = null;
+  }
+  c.cliente = ''; c.nf = ''; c.centroCusto = ''; c.projeto = '';
+  delete c.rateio;
+  renderResults();
+  persistCurrentSession();
+}
+function restaurarMovimentoInterno(fitid){
+  const c = credits.find(x => x.fitid === fitid);
+  if(!c) return;
+  if(!confirm('Voltar a tratar esse lançamento como movimento interno (não é receita)? A identificação feita nele será limpa.')) return;
+  delete c.movInternoDesfeito;
+  delete c.rateio;
+  c.cliente = ''; c.nf = ''; c.centroCusto = ''; c.projeto = '';
+  if(isResgateAplicacao(c.memo)) c.cliente = 'INSTITUTO BRASILEIRO DE GESTAO E PESQUISA';
+  if(isRDC(c.memo)){ c.cliente = 'IBGP/Sicoob'; c.centroCusto = '32000 - Investimento'; c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP'; }
+  if(isMesmaTitularidade(c.memo)){
+    c.cliente = 'INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+    c.centroCusto = '2010 - Transferencia entre contas mesma Titularidade';
+    c.projeto = '00000 - INSTITUTO BRASILEIRO DE GESTÃO E PESQUISA - IBGP';
+  }
+  c.isDevolucao = isDevolucao(c.memo);
+  if(c.isDevolucao) parearEstornoDoCredito(c);
+  renderResults();
+  persistCurrentSession();
+}
+window.desfazerMovimentoInterno = desfazerMovimentoInterno;
+window.restaurarMovimentoInterno = restaurarMovimentoInterno;
+
 // ===================== DIVISÃO DE UM RECEBIMENTO ENTRE VÁRIOS PROJETOS =====================
 // Um crédito do banco pode pagar vários projetos de uma vez. A divisão guarda cada parte
 // (cliente, NF, centro de custo, projeto, valor) em c.rateio; o crédito do extrato continua
@@ -6101,9 +6155,9 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
     }
     let situacao;
     if(c.used) situacao = 'Conciliado (nota fiscal)';
-    else if(isResgateAplicacao(c.memo)) situacao = 'Movimento interno (resgate)';
-    else if(isDevolucao(c.memo)) situacao = 'Movimento interno (devolução)';
-    else if(isMesmaTitularidade(c.memo)) situacao = 'Movimento interno (mesma titularidade)';
+    else if(creditoEhResgate(c)) situacao = 'Movimento interno (resgate)';
+    else if(creditoEhDevolucao(c)) situacao = 'Movimento interno (devolução)';
+    else if(creditoEhMesmaTit(c)) situacao = 'Movimento interno (mesma titularidade)';
     else if(c.cliente) situacao = 'Identificado manualmente';
     else situacao = 'Pendente';
     linhasUnificadas.push({
